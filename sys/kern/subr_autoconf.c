@@ -226,7 +226,7 @@ static struct deferred_config_head interrupt_config_queue =
 static int interrupt_config_threads = 8;
 static struct deferred_config_head mountroot_config_queue =
 	TAILQ_HEAD_INITIALIZER(mountroot_config_queue);
-static int mountroot_config_threads = 2;
+static int mountroot_config_threads = 0;	/* disabled for single-CPU ports */
 static lwp_t **mountroot_config_lwpids;
 static size_t mountroot_config_lwpids_size;
 bool root_is_mounted = false;
@@ -554,6 +554,9 @@ config_create_mountrootthreads(void)
 	if (!root_is_mounted)
 		root_is_mounted = true;
 
+	if (mountroot_config_threads == 0)
+		return;
+
 	mountroot_config_lwpids_size = sizeof(mountroot_config_lwpids) *
 				       mountroot_config_threads;
 	mountroot_config_lwpids = kmem_alloc(mountroot_config_lwpids_size,
@@ -572,6 +575,9 @@ void
 config_finalize_mountroot(void)
 {
 	int i, error;
+
+	if (mountroot_config_threads == 0)
+		return;
 
 	for (i = 0; i < mountroot_config_threads; i++) {
 		if (mountroot_config_lwpids[i] == 0)

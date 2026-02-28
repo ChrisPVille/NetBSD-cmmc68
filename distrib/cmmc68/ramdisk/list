@@ -1,0 +1,36 @@
+#	$NetBSD$
+
+SRCDIRS bin sbin
+
+# copy the crunched binary, link to it, and kill it
+PROG	bin/cat
+PROG	bin/chmod
+PROG	bin/cp
+PROG	bin/echo
+PROG	bin/ln
+PROG	bin/ls
+PROG	bin/mkdir
+PROG	bin/pwd
+PROG	bin/rm
+PROG	bin/sh
+PROG	bin/sync
+
+PROG	sbin/dmesg
+PROG	sbin/init
+PROG	sbin/mknod
+PROG	sbin/mount
+PROG	sbin/mount_ffs
+PROG	sbin/reboot	sbin/halt
+PROG	sbin/umount
+
+ARGVLN	sh -sh
+
+# libhack.o is built by Makefile & included Makefile.inc
+LIBS	libhack.o -lutil -lterminfo -lcrypt -lm -lprop
+
+# various files that we need in /etc for the install
+COPY	${NETBSDSRCDIR}/etc/master.passwd	etc/master.passwd
+COPY	${NETBSDSRCDIR}/etc/group		etc/group
+
+# shell profile
+COPY	${CURDIR}/dot.profile			.profile

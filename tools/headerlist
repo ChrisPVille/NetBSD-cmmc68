@@ -29,6 +29,8 @@
 ./cats/include/elf_machdep.h
 ./cesfic/include/disklabel.h
 ./cesfic/include/elf_machdep.h
+./cmmc68/include/disklabel.h
+./cmmc68/include/elf_machdep.h
 ./cobalt/include/disklabel.h
 ./cobalt/include/elf_machdep.h
 ./dreamcast/include/disklabel.h

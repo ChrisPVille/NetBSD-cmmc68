@@ -1,0 +1,23 @@
+#	$NetBSD: majors.cmmc68,v 1.1 2024/01/01 00:00:00 cmmc68 Exp $
+#
+# Device majors for CMMC68
+#
+
+device-major	cons		char 0
+device-major	ctty		char 1
+device-major	mem		char 2
+device-major	swap		char 3   block 3	vmswap
+device-major	pts		char 4			pty
+device-major	ptc		char 5			pty
+device-major	log		char 6
+device-major	mfpcon		char 7
+
+# Block devices
+device-major	rd		char 8   block 0	rd
+device-major	sd		char 9   block 1	sd
+
+# Pseudo devices
+device-major	md		char 10  block 2	md
+device-major	filedesc	char 11
+device-major	rnd		char 12			rnd
+device-major	ksyms		char 13			ksyms

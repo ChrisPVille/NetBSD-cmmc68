@@ -1028,7 +1028,6 @@ void
 lwp_startup(struct lwp *prev, struct lwp *new_lwp)
 {
 	kmutex_t *lock;
-
 	KASSERTMSG(new_lwp == curlwp, "l %p curlwp %p prevlwp %p", new_lwp, curlwp, prev);
 	KASSERT(kpreempt_disabled());
 	KASSERT(prev != NULL);

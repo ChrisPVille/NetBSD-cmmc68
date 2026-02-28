@@ -807,8 +807,9 @@ callout_hardclock(void)
 	needsoftclock = !CIRCQ_EMPTY(&cc->cc_todo);
 	mutex_spin_exit(cc->cc_lock);
 
-	if (needsoftclock)
+	if (needsoftclock) {
 		softint_schedule(callout_sih);
+	}
 }
 
 /*

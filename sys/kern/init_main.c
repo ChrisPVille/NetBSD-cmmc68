@@ -1094,12 +1094,7 @@ start_init(void *arg)
 		 * Move out the file name (also arg 0).
 		 */
 		i = strlen(path) + 1;
-#ifdef DEBUG
-		aprint_normal("init: copying out path `%s' %d\n", path, i);
-#else
-		if (boothowto & RB_ASKNAME || path != initpaths[0])
-			printf("init: trying %s\n", path);
-#endif
+		printf("init: trying %s\n", path);
 		arg0 = STACK_ALLOC(ucp, i);
 		ucp = STACK_MAX(arg0, i);
 		if ((error = copyout(path, arg0, i)) != 0)
@@ -1130,9 +1125,9 @@ start_init(void *arg)
 			KERNEL_UNLOCK_LAST(l);
 			return;
 		}
-		printf("exec %s: error %d\n", path, error);
+		if (error != ENOENT)
+			printf("exec %s: error %d\n", path, error);
 	}
-	printf("init: not found\n");
 	panic("no init");
 copyerr:
 	panic("copyout %d", error);

@@ -286,6 +286,13 @@ uvm_pageout(void *arg)
 			UVMHIST_LOG(pdhist,"  <<WOKE UP>>",0,0,0,0);
 		} else {
 			mutex_spin_exit(&uvmpd_lock);
+			/*
+			 * Yield the CPU so other threads can run.
+			 * Without this, the pagedaemon can busy-loop
+			 * when KVA is starved on systems without
+			 * kernel preemption.
+			 */
+			kpause("pgdbusy", false, hz, NULL);
 		}
 
 		/*

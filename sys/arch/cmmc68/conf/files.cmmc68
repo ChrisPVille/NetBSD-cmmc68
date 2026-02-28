@@ -1,0 +1,73 @@
+#	$NetBSD: files.cmmc68,v 1.1 2024/01/01 00:00:00 cmmc68 Exp $
+#
+# CMMC68 (MC68010 with custom MMU) kernel configuration files
+
+# Include device majors
+include "arch/cmmc68/conf/majors.cmmc68"
+
+# maxpartitions must be the first item in files.${ARCH}
+maxpartitions 8
+
+maxusers 2 8 64
+
+# CPU options
+defflag	opt_cpubrand.h	M68K_MMU_CMMC68
+
+# Machine-dependent files
+# Note: locore.s is handled specially via MD_OBJS in Makefile.cmmc68
+file	arch/cmmc68/cmmc68/machdep.c
+file	arch/cmmc68/cmmc68/autoconf.c
+file	arch/cmmc68/cmmc68/intr.c
+file	arch/cmmc68/cmmc68/pmap.c
+file	arch/cmmc68/cmmc68/trap.c
+# Common m68k files
+file	arch/m68k/m68k/cacheops.c
+file	arch/m68k/m68k/m68k_trap.c
+file	arch/m68k/m68k/m68k_intr.c
+file	arch/m68k/m68k/m68k_intr_stubs.s
+file	arch/m68k/m68k/mmu_subr.s
+file	arch/m68k/m68k/sys_machdep.c
+file	arch/m68k/m68k/vectors.c
+file	arch/m68k/m68k/vm_machdep.c
+file	arch/m68k/m68k/procfs_machdep.c		procfs
+
+# Console support
+file	dev/cons.c
+
+
+#
+# Mainbus (system bus)
+#
+device	mainbus { }
+attach	mainbus at root
+file	arch/cmmc68/cmmc68/mainbus.c		mainbus needs-flag
+
+#
+# MC68901 MFP (Multi-Function Peripheral)
+#
+device	mfp { }
+attach	mfp at mainbus
+file	arch/cmmc68/cmmc68/mfp.c		mfp needs-flag
+
+# Serial console on MFP (polled I/O character device)
+file	arch/cmmc68/cmmc68/mfpcon.c
+
+# Clock on MFP
+device	clock
+attach	clock at mfp
+file	arch/cmmc68/cmmc68/clock.c		clock needs-flag
+
+# Memory device
+device	mem
+attach	mem at mainbus
+file	arch/cmmc68/cmmc68/mem.c		mem needs-flag
+
+# Note: Console functions (cngetsn, cons_cdevsw) are provided by dev/cons.c
+# which is already included above
+
+# Consolidated kernel stubs (includes all stub implementations)
+file	arch/cmmc68/cmmc68/stubs.c
+
+# Memory disk root
+file	dev/md_root.c				memory_disk_hooks
+

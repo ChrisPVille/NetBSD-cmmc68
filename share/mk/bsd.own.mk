@@ -801,7 +801,7 @@ MACHINES.coldfire=	evbcf
 MACHINES.i386=		i386
 MACHINES.ia64=		ia64
 MACHINES.hppa=		hppa
-MACHINES.m68000=	sun2
+MACHINES.m68000=	cmmc68 sun2
 MACHINES.m68k=		amiga atari cesfic hp300 luna68k mac68k \
 			mvme68k news68k next68k sun3 virt68k x68k
 MACHINES.m68ksf=	mac68k
@@ -1245,7 +1245,7 @@ MKCTF?=		yes
     ${MACHINE_ARCH:Maarch64*} || \
     ${MACHINE_CPU} == "arm" || \
     ${MACHINE} == "macppc" || \
-    ${MACHINE_CPU} == "m68k" || \
+    (${MACHINE_CPU} == "m68k" && ${MACHINE_ARCH} != "m68000") || \
     ${MACHINE_CPU} == "mips" || \
     ${MACHINE_CPU} == "sh3" || \
     ${MACHINE} == "sparc64")

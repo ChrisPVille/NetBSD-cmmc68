@@ -164,7 +164,7 @@ ENTRY(cpu_switchto)
 
 	moveml	PCB_REGS(%a1),%d2-%d7/%a2-%a7 | restore registers
 	movl	PCB_USP(%a1),%a0
-	movl	%a0,%usp		      | and USP
+	movl	%a0,%usp		| and USP
 
 #ifdef _M68K_CUSTOM_FPU_CTX
 	moveml	%d0/%d1,-(%sp)

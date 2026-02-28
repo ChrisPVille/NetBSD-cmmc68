@@ -971,10 +971,6 @@ netbsd_elf_signature(struct lwp *l, struct exec_package *epp,
 	kmem_free(nbuf, ELF_MAXNOTESIZE);
 
 	error = isnetbsd ? 0 : SET_ERROR(ENOEXEC);
-#ifdef DEBUG_ELF
-	if (error)
-		DPRINTF("not netbsd");
-#endif
 out:
 	kmem_free(ph, phsize);
 	return error;

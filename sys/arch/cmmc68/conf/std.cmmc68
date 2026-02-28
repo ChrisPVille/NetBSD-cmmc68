@@ -1,0 +1,19 @@
+#	$NetBSD: std.cmmc68,v 1.1 2024/01/01 00:00:00 cmmc68 Exp $
+#
+# Options/devices that all CMMC68 systems should have
+#
+
+machine cmmc68 m68k
+include		"conf/std"			# MI standard options
+include		"arch/m68k/conf/std.m68k"	# m68k standard options
+
+options 	EXEC_AOUT	# support for exec'ing a.out
+
+# Note: M68010 is defined in machine/param.h, not as a config option,
+# to avoid redefinition conflicts with opt_m68k_arch.h.
+
+# Custom MMU
+options 	M68K_MMU_CMMC68	# Custom MMU for CMMC68
+
+# XXX This is needed by asm code in libkern.
+makeoptions	CPPFLAGS+="-D__HAVE_M68K_BROKEN_RMC=1"

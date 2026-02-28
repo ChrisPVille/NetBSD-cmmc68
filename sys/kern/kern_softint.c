@@ -300,6 +300,7 @@ softint_init(struct cpu_info *ci)
 	softcpu_t *sc, *scfirst;
 	softhand_t *sh, *shmax;
 
+
 	if (first == NULL) {
 		/* Boot CPU. */
 		first = ci;

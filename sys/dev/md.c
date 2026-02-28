@@ -449,9 +449,9 @@ mdstrategy(struct buf *bp)
 			xfer = (sc->sc_size - off);
 		addr = (char *)sc->sc_addr + off;
 		disk_busy(&sc->sc_dkdev);
-		if (is_read)
+		if (is_read) {
 			memcpy(bp->b_data, addr, xfer);
-		else
+		} else
 			memcpy(addr, bp->b_data, xfer);
 		disk_unbusy(&sc->sc_dkdev, xfer, is_read);
 		bp->b_resid -= xfer;

@@ -361,6 +361,7 @@ uvm_page_init(vaddr_t *kvm_startp, vaddr_t *kvm_endp)
 	 * now is to allocate vm_page structures for this memory.
 	 */
 
+
 	if (uvm_physseg_get_last() == UVM_PHYSSEG_TYPE_INVALID)
 		panic("uvm_page_bootstrap: no memory pre-allocated");
 
@@ -377,7 +378,12 @@ uvm_page_init(vaddr_t *kvm_startp, vaddr_t *kvm_endp)
 	for (bank = uvm_physseg_get_first();
 	     uvm_physseg_valid_p(bank) ;
 	     bank = uvm_physseg_get_next(bank)) {
-		freepages += (uvm_physseg_get_end(bank) - uvm_physseg_get_start(bank));
+		{
+			paddr_t end, start;
+			end = uvm_physseg_get_end(bank);
+			start = uvm_physseg_get_start(bank);
+			freepages += end - start;
+		}
 	}
 
 	/*
@@ -415,12 +421,6 @@ uvm_page_init(vaddr_t *kvm_startp, vaddr_t *kvm_endp)
 		pgb = (struct pgflbucket *)(bucketarray + bucketsize * fl);
 		uvm_page_init_bucket(&uvm.page_free[fl], pgb, 0);
 	}
-	memset(pagearray, 0, pagecount * sizeof(struct vm_page));
-
-	/*
-	 * init the freelist cache in the disabled state.
-	 */
-	uvm_pgflcache_init();
 
 	/*
 	 * init the vm_page structures and put them in the correct place.

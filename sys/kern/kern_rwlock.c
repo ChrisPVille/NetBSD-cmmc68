@@ -290,6 +290,8 @@ rw_vector_enter(krwlock_t *rw, const krw_t op)
 	LOCKSTAT_TIMER(slpcnt);
 	LOCKSTAT_TIMER(spintime);
 	LOCKSTAT_COUNTER(spincnt);
+
+
 	LOCKSTAT_FLAG(lsflag);
 
 	l = curlwp;

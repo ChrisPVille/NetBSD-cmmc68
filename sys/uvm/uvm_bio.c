@@ -218,6 +218,15 @@ ubc_init(void)
 		panic("ubc_init: failed to map ubc_object");
 	}
 
+	/*
+	 * Ensure UBC KVA is unmapped so page faults trigger pager calls.
+	 * On platforms where the bootloader pre-maps all kernel VA with
+	 * static PTEs, the KVA would otherwise have stale PTEs pointing
+	 * to wrong physical pages.
+	 */
+	pmap_kremove((vaddr_t)ubc_object.kva, ubc_nwins << ubc_winshift);
+	pmap_update(pmap_kernel());
+
 	hashstat_register("ubchash", ubchash_stats);
 }
 
@@ -364,6 +373,7 @@ ubc_fault(struct uvm_faultinfo *ufi, vaddr_t ign1, struct vm_page **ign2,
 
 	/* no umap locking needed since we have a ref on the umap */
 	uobj = umap->uobj;
+
 
 	if ((access_type & VM_PROT_WRITE) == 0) {
 		npages = (ubc_winsize - slot_offset) >> PAGE_SHIFT;

@@ -995,6 +995,7 @@ uvm_fault_check(
 	}
 	/* locked: maps(read) */
 
+
 #ifdef DIAGNOSTIC
 	if ((ufi->map->flags & VM_MAP_PAGEABLE) == 0) {
 		printf("Page fault on non-pageable map:\n");

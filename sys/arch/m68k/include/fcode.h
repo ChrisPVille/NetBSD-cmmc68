@@ -67,7 +67,7 @@
 #define	FC_SUPERP	6	/* supervisor program space */
 #define	FC_CPU		7	/* CPU space */
 
-#ifdef _KERNEL
+#if defined(_KERNEL) && !defined(__ASSEMBLER__)
 
 static inline int
 getdfc(void)
@@ -100,6 +100,6 @@ setsfc(int val)
 {
 	__asm volatile("movc %0,%%sfc" :: "d" (val));
 }
-#endif /* _KERNEL */
+#endif /* _KERNEL && !__ASSEMBLER__ */
 
 #endif /* _M68K_FCODE_H_ */

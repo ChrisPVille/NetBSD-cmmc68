@@ -1,0 +1,68 @@
+#	$NetBSD: CMMC68,v 1.1 2024/01/01 00:00:00 cmmc68 Exp $
+#
+# Kernel configuration file for CMMC68 (MC68010 with custom MMU)
+
+# Standard options
+include		"arch/cmmc68/conf/std.cmmc68"
+
+# CPU identification
+ident		CMMC68
+
+# Define CMMC68 for platform-specific code
+makeoptions	CPPFLAGS="-DCMMC68"
+makeoptions	COPTS="-Os"		# Optimize for size
+
+# Maximum number of users
+maxusers	2
+
+# Disable unused subsystems
+no options	AIO			# POSIX async I/O
+no options	MQUEUE			# POSIX message queues
+no options	COREDUMP		# Core dumps impractical on 4MB
+
+# Standard system options
+# options 	INET		# IP + TCP + UDP + ICMP - disabled to reduce kernel size
+
+# Memory options - reduce sizes for 4MB VA space
+options 	PAGER_MAP_SIZE=0x00020000	# 128KB pager map (reduced to free KVA)
+
+# Console options
+options 	CONSPEED=9600	# Console speed
+
+# Memory disk for root filesystem
+options		MEMORY_DISK_HOOKS
+options		MEMORY_DISK_IS_ROOT
+options		MEMORY_DISK_ROOT_SIZE=1536	# 768KB ramdisk (1536 * 512-byte blocks)
+
+# Filesystem options
+file-system	FFS		# Fast filesystem
+# file-system	MSDOSFS		# MS-DOS/FAT filesystem - disabled to reduce kernel size
+# file-system	PUFFS		# Userspace filesystems (FUSE equivalent) - disabled
+
+# Device configuration
+
+# Mainbus (system bus)
+mainbus0	at root
+
+# MC68901 MFP (Multi-Function Peripheral)
+mfp0		at mainbus0
+
+# Serial console (polled MFP character device; no attachment needed)
+
+# Clock
+clock0		at mfp?
+
+# Memory device
+mem0		at mainbus0
+
+# Pseudo devices
+pseudo-device	md			# Memory disk device
+# pseudo-device	loop		# Loopback network - requires INET
+# pseudo-device	pty		# Pseudo ttys - disabled to reduce kernel size
+# pseudo-device	putter		# Required for PUFFS - disabled
+
+# Root configuration
+config		netbsd root on ? type ?
+
+# Make options
+makeoptions	TEXTADDR="0x00000000"

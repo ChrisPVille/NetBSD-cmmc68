@@ -401,7 +401,9 @@ uvm_km_suballoc(struct vm_map *map, vaddr_t *vmin /* IN/OUT */,
     struct vm_map *submap)
 {
 	int mapflags = UVM_FLAG_NOMERGE | (fixed ? UVM_FLAG_FIXED : 0);
+	int error;
 	UVMHIST_FUNC(__func__); UVMHIST_CALLED(maphist);
+
 
 	KASSERT(vm_map_pmap(map) == pmap_kernel());
 
@@ -411,9 +413,9 @@ uvm_km_suballoc(struct vm_map *map, vaddr_t *vmin /* IN/OUT */,
 	 * first allocate a blank spot in the parent map
 	 */
 
-	if (uvm_map(map, vmin, size, NULL, UVM_UNKNOWN_OFFSET, 0,
+	if ((error = uvm_map(map, vmin, size, NULL, UVM_UNKNOWN_OFFSET, 0,
 	    UVM_MAPFLAG(UVM_PROT_ALL, UVM_PROT_ALL, UVM_INH_NONE,
-	    UVM_ADV_RANDOM, mapflags)) != 0) {
+	    UVM_ADV_RANDOM, mapflags))) != 0) {
 		panic("%s: unable to allocate space in parent map", __func__);
 	}
 
@@ -802,6 +804,7 @@ uvm_km_kmem_alloc(vmem_t *vm, vmem_size_t size, vm_flag_t flags,
 	vsize_t loopsize;
 
 	size = round_page(size);
+
 
 #if defined(PMAP_MAP_POOLPAGE)
 	if (size == PAGE_SIZE) {

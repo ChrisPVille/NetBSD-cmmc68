@@ -834,6 +834,8 @@ uvm_physseg_plug(paddr_t pfn, size_t pages, uvm_physseg_t *psp)
 
 	vm_nphysmem++;
 
+	physmem += pages;  /* Track total physical memory */
+
 	if (psp != NULL)
 		*psp = lcv;
 
@@ -1026,9 +1028,9 @@ uvm_physseg_get_start(uvm_physseg_t upm)
 paddr_t
 uvm_physseg_get_end(uvm_physseg_t upm)
 {
-	if (uvm_physseg_valid_p(upm) == false)
+	if (uvm_physseg_valid_p(upm) == false) {
 		return (paddr_t) -1;
-
+	}
 	return HANDLE_TO_PHYSSEG_NODE(upm)->end;
 }
 

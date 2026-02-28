@@ -88,6 +88,7 @@ __KERNEL_RCSID(0, "$NetBSD: kern_synch.c,v 1.366 2023/11/22 13:18:48 riastradh E
 #include <sys/lockdebug.h>
 #include <sys/lwpctl.h>
 #include <sys/proc.h>
+#include <m68k/pcb.h>
 #include <sys/pserialize.h>
 #include <sys/resource.h>
 #include <sys/resourcevar.h>
@@ -249,8 +250,9 @@ kpause(const char *wmesg, bool intr, int timo, kmutex_t *mtx)
 	KASSERTMSG(timo != 0 || intr, "wmesg=%s intr=%s timo=%d mtx=%p",
 	    wmesg, intr ? "true" : "false", timo, mtx);
 
-	if (sleepq_dontsleep(l))
+	if (sleepq_dontsleep(l)) {
 		return sleepq_abort(NULL, 0);
+	}
 
 	if (mtx != NULL)
 		mutex_exit(mtx);
@@ -655,6 +657,7 @@ mi_switch(lwp_t *l)
 		newl = softint_picklwp();
 		newl->l_stat = LSONPROC;
 		newl->l_pflag |= LP_RUNNING;
+		/* softint path */
 	}
 #endif	/* !__HAVE_FAST_SOFTINTS */
 
@@ -683,6 +686,7 @@ mi_switch(lwp_t *l)
 	/* Pick new LWP to run. */
 	if (newl == NULL) {
 		newl = nextlwp(ci, spc);
+		/* nextlwp path */
 	}
 
 	/* Items that must be updated with the CPU locked. */

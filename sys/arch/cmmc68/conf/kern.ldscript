@@ -1,0 +1,82 @@
+/*	$NetBSD: kern.ldscript,v 1.1 2024/01/01 00:00:00 cmmc68 Exp $	*/
+
+/* Linker script for NetBSD/cmmc68 kernel */
+
+#include "assym.h"
+
+__PAGE_SIZE = 0x1000;
+
+ENTRY(_start)
+SECTIONS
+{
+	/* Kernel starts at 0x00000000 for our setup */
+	. = 0x00000000;
+
+	.text :
+	{
+		KEEP(*(.text._start));
+		*(.text)
+		*(.text.*)
+		*(.stub)
+		. = ALIGN(__PAGE_SIZE);
+	} =0xCC
+	_etext = . ;
+	PROVIDE(etext = .);
+
+	. = ALIGN(__PAGE_SIZE);
+	__rodata_start = .;
+
+	.rodata :
+	{
+		*(.rodata)
+		*(.rodata.*)
+		. = ALIGN(16);
+		__CTOR_LIST__ = .;
+		*(.ctors)
+		__CTOR_END__ = .;
+	}
+
+	. = ALIGN(__PAGE_SIZE);
+
+	__data_start = .;
+	.data :
+	{
+		*(.data)
+	}
+
+	. = ALIGN(16);
+	.data.cacheline_aligned :
+	{
+		*(.data.cacheline_aligned)
+	}
+	. = ALIGN(16);
+	.data.read_mostly :
+	{
+		*(.data.read_mostly)
+	}
+	. = ALIGN(16);
+
+	_edata = .;
+	PROVIDE(edata = .);
+	__bss_start = .;
+	.bss :
+	{
+		*(.bss)
+		*(.bss.*)
+		*(COMMON)
+		. = ALIGN(__PAGE_SIZE);
+	}
+
+	. = ALIGN(__PAGE_SIZE);
+
+	/* End of the kernel image */
+	__kernel_end = .;
+
+	_end = .;
+	PROVIDE(end = .);
+
+	.note.netbsd.ident :
+	{
+		KEEP(*(.note.netbsd.ident));
+	}
+}
