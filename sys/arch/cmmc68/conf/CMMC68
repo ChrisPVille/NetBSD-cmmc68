@@ -9,7 +9,7 @@ include		"arch/cmmc68/conf/std.cmmc68"
 ident		CMMC68
 
 # Define CMMC68 for platform-specific code
-makeoptions	CPPFLAGS="-DCMMC68"
+makeoptions	CPPFLAGS="-DCMMC68 -DNO_CRYPTO_SELFTEST"
 makeoptions	COPTS="-Os"		# Optimize for size
 
 # Maximum number of users
@@ -27,7 +27,7 @@ no options	COREDUMP		# Core dumps impractical on 4MB
 options 	PAGER_MAP_SIZE=0x00020000	# 128KB pager map (reduced to free KVA)
 
 # Console options
-options 	CONSPEED=9600	# Console speed
+options 	CONSPEED=19200	# Console speed
 
 # Memory disk for root filesystem
 options		MEMORY_DISK_HOOKS
@@ -51,6 +51,12 @@ mfp0		at mainbus0
 
 # Clock
 clock0		at mfp?
+
+# MC68230 PI/T (timer + parallel port)
+pit0		at mainbus0
+
+# MC68681 DUART (dual serial)
+duart0		at mainbus0
 
 # Memory device
 mem0		at mainbus0

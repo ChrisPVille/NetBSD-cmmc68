@@ -162,6 +162,7 @@ nmi(struct trapframe *tf)
 	panic("NMI");
 }
 
+
 /*
  * Main trap function (called from faultstkadj in trap_subr.s)
  *
@@ -317,22 +318,6 @@ trap(struct frame *fp, int type, u_int code, u_int v)
 				if ((void *)va >= vm->vm_maxsaddr)
 					uvm_grow(p, va);
 				goto finish;
-			}
-
-			/* uvm_fault failed — determine signal to send */
-			{
-				static int fail_cnt;
-				fail_cnt++;
-				if (fail_cnt <= 5)
-					printf("ufault FAIL va=0x%x rv=%d "
-					    "pc=0x%x code=0x%x\n",
-					    (u_int)va, rv, tf->tf_pc, code);
-				if (fail_cnt > 100) {
-					printf("too many faults, killing "
-					    "pid %d\n", p->p_pid);
-					exit1(l, 0, SIGSEGV);
-					/* NOTREACHED */
-				}
 			}
 
 			if (rv == EACCES) {

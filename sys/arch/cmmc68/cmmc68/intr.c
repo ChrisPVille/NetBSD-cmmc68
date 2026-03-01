@@ -32,6 +32,8 @@
 #include <machine/intr.h>
 #include <machine/cpu.h>
 #include <machine/mfpreg.h>
+#include <machine/pitreg.h>
+#include <machine/duartreg.h>
 
 /*
  * CPU info structure for the primary CPU
@@ -61,26 +63,39 @@ intr_init(void)
 
 /*
  * Dispatch interrupt
- * Called from intrhand_autovec in locore.s.
+ * Called from intrhand_autovec in locore.s with clockframe pointer.
  *
- * intrhand_autovec does INTERRUPT_SAVEREG (saves d0/d1/a0/a1) then
- * jbsr here.  The clockframe sits just above the return address on
- * the stack: saved regs + hardware SR/PC frame.
+ * The clockframe contains saved d0/d1/a0/a1, then the MC68010
+ * hardware exception frame: SR, PC, and format/vector word.
+ * We extract the vector number from cf_vo to dispatch to the
+ * correct handler.
  *
- * For CMMC68, all interrupts come from the MFP at level 7.
- * The MFP IACK cycle clears the pending bit BEFORE we get here,
- * so we cannot read IPRA to determine the source.  Since Timer A
- * is the only enabled interrupt source, just always call clock_intr.
+ * Vector assignments:
+ *   0x40-0x4F  MFP vectors (Timer A = 0x4D)
+ *   0x50       PIT timer
+ *   0x51       DUART
  */
 void
-intr_dispatch(int level)
+intr_dispatch(struct clockframe *cf)
 {
 	extern int clock_intr(void *);
-	struct clockframe cf;
+	extern void pit_timer_intr(struct clockframe *);
+	extern void duart_intr(void);
+	extern void mfp_rcv_intr(void);
 
-	memset(&cf, 0, sizeof(cf));
-	cf.cf_sr = 0x2000;  /* Supervisor mode, IPL 0 */
-	clock_intr(&cf);
+	int vecnum = (cf->cf_vo & 0x0FFF) >> 2;
+
+	if (vecnum == (PIT_TIMER_VEC)) {
+		pit_timer_intr(cf);
+	} else if (vecnum == (DUART_VEC)) {
+		duart_intr();
+	} else if (vecnum == 0x4C) {
+		/* MFP vector 0x4C: Receive Buffer Full (channel 12) */
+		mfp_rcv_intr();
+	} else if (vecnum >= 0x40 && vecnum <= 0x4F) {
+		/* Other MFP vectors (timer, transmit, etc.) */
+		clock_intr(cf);
+	}
 }
 
 /*

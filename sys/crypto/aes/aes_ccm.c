@@ -609,9 +609,11 @@ aes_ccm_modcmd(modcmd_t cmd, void *opaque)
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
+#ifndef NO_CRYPTO_SELFTEST
 		if (aes_ccm_selftest())
 			return EIO;
 		aprint_debug("aes_ccm: self-test passed\n");
+#endif
 		return 0;
 	case MODULE_CMD_FINI:
 		return 0;

@@ -57,6 +57,16 @@ device	clock
 attach	clock at mfp
 file	arch/cmmc68/cmmc68/clock.c		clock needs-flag
 
+# MC68230 PI/T (timer + parallel port)
+device	pit
+attach	pit at mainbus
+file	arch/cmmc68/cmmc68/pit.c		pit needs-flag
+
+# MC68681 DUART (dual serial)
+device	duart
+attach	duart at mainbus
+file	arch/cmmc68/cmmc68/duart.c		duart needs-flag
+
 # Memory device
 device	mem
 attach	mem at mainbus

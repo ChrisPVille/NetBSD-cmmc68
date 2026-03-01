@@ -57,8 +57,10 @@
  * Machine-dependent interrupt functions
  */
 
+struct clockframe;
+
 void	intr_init(void);
-void	intr_dispatch(int);
+void	intr_dispatch(struct clockframe *);
 void	intr_enable_level(int);
 void	intr_disable_level(int);
 int	intr_save(void);

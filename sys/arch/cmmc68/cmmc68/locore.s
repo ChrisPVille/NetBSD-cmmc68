@@ -465,8 +465,11 @@ Lbrkpt3:
 
 ENTRY_NOPROFILE(intrhand_autovec)
 	addql	#1,_C_LABEL(intr_depth)
-	INTERRUPT_SAVEREG
-	jbsr	_C_LABEL(intr_dispatch)	| call dispatcher
+	INTERRUPT_SAVEREG		| saves d0/d1/a0/a1 (16 bytes)
+	lea	%sp@,%a0		| a0 = clockframe pointer
+	movl	%a0,%sp@-		| push clockframe* arg
+	jbsr	_C_LABEL(intr_dispatch)	| intr_dispatch(clockframe *)
+	addql	#4,%sp			| pop argument
 	INTERRUPT_RESTOREREG
 	subql	#1,_C_LABEL(intr_depth)
 

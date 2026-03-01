@@ -1,0 +1,13 @@
+#	$NetBSD$
+
+/set				type=dir uname=root gname=wheel mode=0755
+
+.
+./bin
+./dev
+./etc
+./mnt
+./sbin
+./tmp				mode=01777
+./var
+./var/run

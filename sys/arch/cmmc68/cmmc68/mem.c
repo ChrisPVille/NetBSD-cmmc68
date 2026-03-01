@@ -6,12 +6,19 @@
 #include <sys/systm.h>
 #include <sys/device.h>
 
-void mem_attach(device_t, device_t, void *);
+static int mem_attached;
 
-CFATTACH_DECL_NEW(mem, 0, NULL, mem_attach, NULL, NULL);
-
-void
-mem_attach(device_t parent, device_t self, void *aux)
+static int
+mem_match(device_t parent, cfdata_t cf, void *aux)
 {
+	return !mem_attached;
+}
+
+static void
+mem_attach(device_t self, device_t parent, void *aux)
+{
+	mem_attached = 1;
 	aprint_normal("\n");
 }
+
+CFATTACH_DECL_NEW(mem, 0, mem_match, mem_attach, NULL, NULL);

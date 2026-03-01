@@ -163,20 +163,46 @@ cpu_halt(void)
 
 /*
  * System reboot
+ *
+ * The 'reset' instruction clears the MMU context register, putting
+ * the MMU into bypass mode (VA = PA).  After that, code at kernel VA
+ * (0x000XXXXX mapped to PA 0x400000+) is no longer reachable.
+ *
+ * Solution: write a small trampoline to monitor SRAM at 0xFF0000,
+ * which is identity-mapped (VA = PA both with and without MMU).
+ * The trampoline executes 'reset' then jumps to the bootloader
+ * entry at PA 0xFE0200.
  */
 void
 cpu_reboot(int howto, char *bootstr)
 {
+        volatile uint16_t *tramp;
+
         if (howto & RB_HALT) {
                 cpu_halt();
         }
 
         printf("Rebooting...\n");
 
-        /* Jump to reset vector */
-        __asm__ volatile("reset");
-        __asm__ volatile("jmp 0x00000000");
+        /* Disable interrupts */
+        __asm__ volatile("oriw #0x0700, %%sr" ::: "cc");
 
+        /*
+         * Write trampoline to identity-mapped SRAM at 0xFF0000.
+         *   0x4E70       reset
+         *   0x4EF9       jmp abs.l
+         *   0x00FE 0200  0x00FE0200 (bootloader entry)
+         */
+        tramp = (volatile uint16_t *)0xFF0000;
+        tramp[0] = 0x4E70;     /* reset */
+        tramp[1] = 0x4EF9;     /* jmp abs.l */
+        tramp[2] = 0x00FE;     /* high word of 0x00FE0200 */
+        tramp[3] = 0x0200;     /* low word of 0x00FE0200 */
+
+        /* Jump to trampoline */
+        __asm__ volatile("jmp 0xFF0000");
+
+        /* NOTREACHED */
         for (;;);
 }
 
@@ -245,6 +271,14 @@ cpu_startup(void)
             (unsigned long)virtual_avail,
             (unsigned long)virtual_end);
         printf("  physmem=%d avail=%d\n", (int)physmem, (int)uvmexp.free);
+
+        identifycpu();
+
+        printf("  text=%lu data=%lu bss=%lu\n",
+            (unsigned long)(etext - kernel_text),
+            (unsigned long)(edata - etext),
+            (unsigned long)(end - edata));
+        printf("Initializing kernel subsystems...\n");
 }
 
 /*

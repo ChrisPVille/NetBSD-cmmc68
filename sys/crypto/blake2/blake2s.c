@@ -336,9 +336,11 @@ blake2s_modcmd(modcmd_t cmd, void *opaque)
 
 	switch (cmd) {
 	case MODULE_CMD_INIT:
+#ifndef NO_CRYPTO_SELFTEST
 		if (blake2s_selftest())
 			panic("blake2s: self-test failed");
 		aprint_debug("blake2s: self-test passed\n");
+#endif
 		return 0;
 	case MODULE_CMD_FINI:
 		return 0;

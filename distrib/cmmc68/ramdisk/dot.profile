@@ -1,3 +1,5 @@
 PATH=/bin:/sbin
-export PATH
+TERM=vt100
+export PATH TERM
+set -o emacs
 echo "NetBSD/cmmc68"

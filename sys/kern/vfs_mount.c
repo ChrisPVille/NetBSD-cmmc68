@@ -1298,9 +1298,6 @@ vfs_mountroot(void)
 	LIST_FOREACH(v, &vfs_list, vfs_list) {
 		if (v->vfs_mountroot == NULL)
 			continue;
-#ifdef DEBUG
-		aprint_normal("mountroot: trying %s...\n", v->vfs_name);
-#endif
 		v->vfs_refcount++;
 		mutex_exit(&vfs_list_lock);
 		error = (*v->vfs_mountroot)();

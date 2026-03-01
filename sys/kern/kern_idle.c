@@ -79,14 +79,6 @@ idle_loop(void *dummy)
 		    l, l->l_nopreempt);
 
 		sched_idle();
-		{
-			static int idle_dbg_cnt2;
-			if (++idle_dbg_cnt2 <= 5)
-				printf("idle: pre spc=%d soft=0x%x resched=%d\n",
-				    spc->spc_count,
-				    ci->ci_data.cpu_softints,
-				    ci->ci_want_resched);
-		}
 		if (!sched_curcpu_runnable_p()) {
 			if ((spc->spc_flags & SPCF_OFFLINE) == 0) {
 				uvm_idle();
@@ -95,12 +87,6 @@ idle_loop(void *dummy)
 				cpu_idle();
 				if (!sched_curcpu_runnable_p() &&
 				    !ci->ci_want_resched) {
-					static int idle_cont_cnt;
-					if (++idle_cont_cnt <= 5)
-						printf("idle: continue spc=%d soft=0x%x resched=%d\n",
-						    spc->spc_count,
-						    ci->ci_data.cpu_softints,
-						    ci->ci_want_resched);
 					continue;
 				}
 			}

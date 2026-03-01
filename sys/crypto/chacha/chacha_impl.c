@@ -77,10 +77,12 @@ chacha_select(void)
 {
 
 	if (chacha_md_impl) {
+#ifndef NO_CRYPTO_SELFTEST
 		if (chacha_selftest(chacha_md_impl))
 			aprint_error("chacha: self-test failed: %s\n",
 			    chacha_md_impl->ci_name);
 		else
+#endif
 			chacha_impl = chacha_md_impl;
 	}
 

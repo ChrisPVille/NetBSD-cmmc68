@@ -96,6 +96,93 @@ static vaddr_t pmap_scr1_va;	/* for pmap_zero_page dest */
 static vaddr_t pmap_scr2_va;	/* for pmap_copy_page src */
 
 /*
+ * Software reference and modify bitmaps.
+ *
+ * The CMMC68 MMU has no hardware reference/modify bits in its PTEs
+ * (format: EX/RW/U/M/PPN — M is "mapped/valid", not "modified").
+ * Without software tracking, pmap_is_referenced() returns false for
+ * ALL pages, which causes the page daemon's clock algorithm to treat
+ * every page as unreferenced → immediate eviction → catastrophic
+ * thrashing when demand-paging brings in new code pages (e.g. first
+ * invocation of ls loads ~50 pages of fts/sort/format code that were
+ * never touched by sh or chmod, pushing free below freemin, triggering
+ * the page daemon which evicts those same pages in a tight loop).
+ *
+ * Fix: set reference bit in pmap_enter (page was just mapped, so it's
+ * being used).  The page daemon's clock hand clears it; if the page
+ * is re-entered before the next scan, it survives.  This gives each
+ * page at least one clock-hand reprieve, breaking the thrashing cycle.
+ *
+ * Physical RAM: PA 0x400000-0x800000 → PPN 0x400-0x7FF (1024 pages).
+ * Bitmaps: 128 bytes each.
+ */
+#define PMAP_PHYS_BASE_PPN	0x400
+#define PMAP_PHYS_NPAGES	1024	/* 4MB / 4KB */
+
+static uint8_t pmap_refbits[PMAP_PHYS_NPAGES / 8];
+static uint8_t pmap_modbits[PMAP_PHYS_NPAGES / 8];
+
+static inline void
+pmap_set_refbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES)
+		pmap_refbits[idx >> 3] |= (1 << (idx & 7));
+}
+
+static inline bool
+pmap_test_refbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES)
+		return (pmap_refbits[idx >> 3] & (1 << (idx & 7))) != 0;
+	return false;
+}
+
+static inline bool
+pmap_test_and_clear_refbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES) {
+		uint8_t mask = 1 << (idx & 7);
+		bool was = (pmap_refbits[idx >> 3] & mask) != 0;
+		pmap_refbits[idx >> 3] &= ~mask;
+		return was;
+	}
+	return false;
+}
+
+static inline void
+pmap_set_modbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES)
+		pmap_modbits[idx >> 3] |= (1 << (idx & 7));
+}
+
+static inline bool
+pmap_test_modbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES)
+		return (pmap_modbits[idx >> 3] & (1 << (idx & 7))) != 0;
+	return false;
+}
+
+static inline bool
+pmap_test_and_clear_modbit(paddr_t pa)
+{
+	unsigned int idx = (pa >> PAGE_SHIFT) - PMAP_PHYS_BASE_PPN;
+	if (idx < PMAP_PHYS_NPAGES) {
+		uint8_t mask = 1 << (idx & 7);
+		bool was = (pmap_modbits[idx >> 3] & mask) != 0;
+		pmap_modbits[idx >> 3] &= ~mask;
+		return was;
+	}
+	return false;
+}
+
+/*
  * Software bitmap tracking which pages were explicitly mapped by pmap.
  * The bootloader maps all of kernel VA (0x0-0x3FFFFF), but UVM needs
  * pmap_extract to return false for pages not explicitly managed by pmap.
@@ -124,6 +211,50 @@ pmap_bitmap_test(vaddr_t va)
 	unsigned int vpn = (va >> PAGE_SHIFT) & 0x3FF;
 	return (pmap_mapped[vpn >> 3] & (1 << (vpn & 7))) != 0;
 }
+
+/*
+ * Per-process user PTE backing store.
+ *
+ * Each user pmap has a software copy of its user-space PTEs.
+ * User VA range: 0x400000-0xDFFFFF → VPN 0x400-0xDFF = 2560 entries.
+ * On context switch, pmap_activate() loads the new process's PTEs
+ * into the hardware page table window.
+ *
+ * We repurpose existing struct pmap fields (from pmap_motorola.h):
+ *   pm_ptab  → pointer to uint16_t[USER_NPTES] backing store
+ *   pm_stab  → next pointer in global pmap list
+ */
+#define USER_VPN_BASE	0x400
+#define USER_VPN_END	0xE00				/* exclusive */
+#define USER_NPTES	(USER_VPN_END - USER_VPN_BASE)	/* 2560 */
+#define USER_PTE_BYTES	(USER_NPTES * sizeof(uint16_t))	/* 5120 */
+
+#define PM_USER_PTES(pm)   ((uint16_t *)(pm)->pm_ptab)
+#define PM_SET_PTES(pm, p) ((pm)->pm_ptab = (pt_entry_t *)(p))
+#define PM_NEXT(pm)        ((struct pmap *)(pm)->pm_stab)
+#define PM_SET_NEXT(pm, n) ((pm)->pm_stab = (st_entry_t *)(n))
+
+/*
+ * Static pool of PTE backing stores.
+ * Using static allocation avoids runtime kmem_zalloc which can cause
+ * memory pressure during early boot (only ~496 pages of RAM).
+ * 4 slots supports up to 4 concurrent user processes.
+ */
+#define PMAP_MAX_USER	4
+static uint16_t pmap_pte_pool[PMAP_MAX_USER][USER_NPTES];
+static bool pmap_pte_inuse[PMAP_MAX_USER];
+
+/*
+ * Global list of all user pmaps.
+ * Used by pmap_page_protect() to find all mappings of a physical page.
+ */
+static struct pmap *pmap_allpmaps;
+
+/*
+ * Currently active user pmap (whose PTEs are loaded in hardware).
+ * NULL during early boot before any user process runs.
+ */
+static struct pmap *pmap_active;
 
 /*
  * Write a PTE to the MMU page table window.
@@ -296,31 +427,81 @@ pmap_init(void)
 }
 
 /*
- * Create a new pmap
+ * Create a new pmap.
+ * Allocates a per-process user PTE backing store and adds
+ * the pmap to the global list for pmap_page_protect() scanning.
  */
 pmap_t
 pmap_create(void)
 {
 	struct pmap *pm;
-	
+	int i;
+
 	pm = kmem_zalloc(sizeof(*pm), KM_SLEEP);
 	if (pm == NULL)
 		return NULL;
-	
+
+	/* Allocate a PTE backing store from the static pool */
+	for (i = 0; i < PMAP_MAX_USER; i++) {
+		if (!pmap_pte_inuse[i]) {
+			pmap_pte_inuse[i] = true;
+			memset(pmap_pte_pool[i], 0, USER_PTE_BYTES);
+			PM_SET_PTES(pm, pmap_pte_pool[i]);
+			break;
+		}
+	}
+	if (i == PMAP_MAX_USER) {
+		printf("pmap_create: no free PTE slots\n");
+		kmem_free(pm, sizeof(*pm));
+		return NULL;
+	}
+
 	pm->pm_count = 1;
+
+	/* Add to global pmap list */
+	PM_SET_NEXT(pm, pmap_allpmaps);
+	pmap_allpmaps = pm;
+
 	return pm;
 }
 
 /*
- * Destroy a pmap
+ * Destroy a pmap.
+ * Frees the per-process PTE backing store and removes from global list.
  */
 void
 pmap_destroy(pmap_t pm)
 {
+	struct pmap **pp;
+
 	if (pm == NULL)
 		return;
-	
+
 	if (atomic_dec_uint_nv(&pm->pm_count) == 0) {
+		/* Remove from global pmap list */
+		for (pp = &pmap_allpmaps; *pp != NULL;
+		    pp = (struct pmap **)&((*pp)->pm_stab)) {
+			if (*pp == pm) {
+				*pp = PM_NEXT(pm);
+				break;
+			}
+		}
+
+		/* Clear active pointer if this pmap was active */
+		if (pmap_active == pm)
+			pmap_active = NULL;
+
+		/* Return PTE backing store to static pool */
+		if (PM_USER_PTES(pm) != NULL) {
+			int i;
+			for (i = 0; i < PMAP_MAX_USER; i++) {
+				if (PM_USER_PTES(pm) == pmap_pte_pool[i]) {
+					pmap_pte_inuse[i] = false;
+					break;
+				}
+			}
+		}
+
 		kmem_free(pm, sizeof(*pm));
 	}
 }
@@ -353,7 +534,10 @@ pmap_prot_to_pte(vm_prot_t prot, bool user)
 }
 
 /*
- * Enter a mapping
+ * Enter a mapping.
+ * For user VA on a user pmap: write to per-process backing store,
+ * and also to hardware if this pmap is currently active.
+ * For kernel VA: write directly to hardware.
  */
 int
 pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
@@ -365,20 +549,35 @@ pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
 	ppn = (pa >> PAGE_SHIFT) & PTE_PPN;
 	pte = PTE_M | ppn | pmap_prot_to_pte(prot, user);
 
-	pmap_write_pte(va, pte);
+	/* Software reference/modify tracking for page daemon */
+	pmap_set_refbit(pa);
+	if (prot & VM_PROT_WRITE)
+		pmap_set_modbit(pa);
 
-	/* Track kernel VA in bitmap for pmap_extract */
-	if (!user && va < VM_MAX_KERNEL_ADDRESS)
-		pmap_bitmap_set(va);
+	if (user && pm != pmap_kernel() && PM_USER_PTES(pm) != NULL) {
+		/* User page: write to per-process backing store */
+		unsigned int vpn = (va >> PAGE_SHIFT) & 0xFFF;
+		unsigned int idx = vpn - USER_VPN_BASE;
+		if (idx < USER_NPTES) {
+			PM_USER_PTES(pm)[idx] = pte;
+			if (pm == pmap_active)
+				pmap_write_pte(va, pte);
+		}
+	} else {
+		/* Kernel VA or no backing store: write to hardware */
+		pmap_write_pte(va, pte);
+		if (!user && va < VM_MAX_KERNEL_ADDRESS)
+			pmap_bitmap_set(va);
+	}
 
 	return 0;
 }
 
 /*
  * Remove mappings in the given range.
- * Clear PTEs for both user VA and kernel VA.  For kernel VA, this is
- * needed by UBC which calls pmap_remove(pmap_kernel()) to unmap window
- * pages when recycling windows for different file data.
+ * For user VA on a user pmap: clear per-process backing store,
+ * and also hardware if this pmap is currently active.
+ * For kernel VA: clear hardware directly (needed by UBC).
  */
 void
 pmap_remove(pmap_t pm, vaddr_t sva, vaddr_t eva)
@@ -386,20 +585,34 @@ pmap_remove(pmap_t pm, vaddr_t sva, vaddr_t eva)
 	vaddr_t va;
 
 	for (va = sva; va < eva; va += PAGE_SIZE) {
-		pmap_write_pte(va, PTE_INVALID);
-		if (va < VM_MAX_KERNEL_ADDRESS)
-			pmap_bitmap_clear(va);
+		if (va >= VM_MIN_USER_ADDRESS &&
+		    pm != pmap_kernel() && PM_USER_PTES(pm) != NULL) {
+			unsigned int vpn = (va >> PAGE_SHIFT) & 0xFFF;
+			unsigned int idx = vpn - USER_VPN_BASE;
+			if (idx < USER_NPTES) {
+				PM_USER_PTES(pm)[idx] = PTE_INVALID;
+				if (pm == pmap_active)
+					pmap_write_pte(va, PTE_INVALID);
+			}
+		} else {
+			pmap_write_pte(va, PTE_INVALID);
+			if (va < VM_MAX_KERNEL_ADDRESS)
+				pmap_bitmap_clear(va);
+		}
 	}
 }
 
 /*
  * Extract physical address.
- * For kernel VA, use the bootloader's known VA→PA mapping.
- * For user VA, read the hardware PTE.
+ * For kernel VA, use the bitmap + hardware PTE.
+ * For user VA, read from the per-process backing store so that
+ * we return the correct mapping even for non-active pmaps.
  */
 bool
 pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 {
+	uint16_t pte;
+
 	if (pm == pmap_kernel()) {
 		/*
 		 * Kernel VA: use bitmap to distinguish pages explicitly
@@ -409,8 +622,7 @@ pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 		 */
 		if (!pmap_bitmap_test(va))
 			return false;
-		/* Read actual PA from hardware PTE */
-		uint16_t pte = pmap_read_pte(va);
+		pte = pmap_read_pte(va);
 		if (!(pte & PTE_M))
 			return false;
 		if (pap != NULL)
@@ -419,21 +631,36 @@ pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 		return true;
 	}
 
-	/* User VA: read hardware PTE directly */
-	{
-		uint16_t pte = pmap_read_pte(va);
+	/* User VA: read hardware if active, backing store otherwise */
+	if (va >= VM_MIN_USER_ADDRESS) {
+		if (pm == pmap_active) {
+			/* Active pmap: read hardware directly */
+			pte = pmap_read_pte(va);
+		} else if (PM_USER_PTES(pm) != NULL) {
+			unsigned int vpn = (va >> PAGE_SHIFT) & 0xFFF;
+			unsigned int idx = vpn - USER_VPN_BASE;
+			if (idx >= USER_NPTES)
+				return false;
+			pte = PM_USER_PTES(pm)[idx];
+		} else {
+			return false;
+		}
 		if (!(pte & PTE_M))
 			return false;
 		if (pap != NULL)
-			*pap = ((paddr_t)(pte & PTE_PPN) << PAGE_SHIFT) |
-			    (va & PAGE_MASK);
+			*pap = ((paddr_t)(pte & PTE_PPN) <<
+			    PAGE_SHIFT) | (va & PAGE_MASK);
 		return true;
 	}
+
+	return false;
 }
 
 /*
  * Protect a range.
- * Only modify hardware PTEs for user VA.
+ * For user VA on a user pmap: update per-process backing store,
+ * and also hardware if active.  This is called during fork to
+ * remove write permission for COW.
  */
 void
 pmap_protect(pmap_t pm, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
@@ -449,21 +676,59 @@ pmap_protect(pmap_t pm, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
 	for (va = sva; va < eva; va += PAGE_SIZE) {
 		if (va < VM_MIN_USER_ADDRESS)
 			continue;
-		pte = pmap_read_pte(va);
-		if (!(pte & PTE_M))
-			continue;
-		pte = PTE_M | (pte & PTE_PPN) | pmap_prot_to_pte(prot, true);
-		pmap_write_pte(va, pte);
+
+		if (pm != pmap_kernel() && PM_USER_PTES(pm) != NULL) {
+			unsigned int vpn = (va >> PAGE_SHIFT) & 0xFFF;
+			unsigned int idx = vpn - USER_VPN_BASE;
+			if (idx >= USER_NPTES)
+				continue;
+			pte = PM_USER_PTES(pm)[idx];
+			if (!(pte & PTE_M))
+				continue;
+			pte = PTE_M | (pte & PTE_PPN) |
+			    pmap_prot_to_pte(prot, true);
+			PM_USER_PTES(pm)[idx] = pte;
+			if (pm == pmap_active)
+				pmap_write_pte(va, pte);
+		} else {
+			pte = pmap_read_pte(va);
+			if (!(pte & PTE_M))
+				continue;
+			pte = PTE_M | (pte & PTE_PPN) |
+			    pmap_prot_to_pte(prot, true);
+			pmap_write_pte(va, pte);
+		}
 	}
 }
 
 /*
- * Activate a pmap (switch to it)
+ * Activate a pmap (switch to it).
+ * Called from mi_switch() and lwp_startup() during context switch.
+ * Loads the new process's user PTEs into the hardware page table window.
  */
 void
 pmap_activate(struct lwp *l)
 {
-	/* TODO: Switch MMU context */
+	struct pmap *pm = l->l_proc->p_vmspace->vm_map.pmap;
+	volatile uint16_t *hw = (volatile uint16_t *)MMU_PAGETABLE_WIN;
+	int i;
+
+	/* If same pmap is already active, nothing to do */
+	if (pm == pmap_active)
+		return;
+
+	if (pm == pmap_kernel() || PM_USER_PTES(pm) == NULL) {
+		/* Kernel thread: clear all user PTEs in hardware */
+		for (i = USER_VPN_BASE; i < USER_VPN_END; i++)
+			hw[i] = PTE_INVALID;
+	} else {
+		/* User process: load its user PTEs into hardware */
+		uint16_t *ptes = PM_USER_PTES(pm);
+		for (i = 0; i < USER_NPTES; i++)
+			hw[USER_VPN_BASE + i] = ptes[i];
+	}
+
+	pmap_active = pm;
 }
 
 /*
@@ -485,43 +750,47 @@ pmap_unwire(pmap_t pm, vaddr_t va)
 }
 
 /*
- * Clear modify bits - takes vm_page now
+ * Clear modify bit — return old value.
+ * Called by page daemon before pageout to check if writeback is needed.
  */
 bool
 pmap_clear_modify(struct vm_page *pg)
 {
-	/* TODO: Implement */
-	return false;
+	return pmap_test_and_clear_modbit(VM_PAGE_TO_PHYS(pg));
 }
 
 /*
- * Clear reference bits - takes vm_page now
+ * Clear reference bit — return old value.
+ * Called by page daemon clock algorithm.  If true, page gets another
+ * chance (moved back to active queue).  If false, page is an eviction
+ * candidate.  Without this, ALL pages appear unreferenced and the
+ * page daemon evicts everything on sight, causing thrashing.
  */
 bool
 pmap_clear_reference(struct vm_page *pg)
 {
-	/* TODO: Implement */
-	return false;
+	return pmap_test_and_clear_refbit(VM_PAGE_TO_PHYS(pg));
 }
 
 /*
- * Is page modified? - takes vm_page now
+ * Is page modified?
  */
 bool
 pmap_is_modified(struct vm_page *pg)
 {
-	/* TODO: Implement */
-	return false;
+	return pmap_test_modbit(VM_PAGE_TO_PHYS(pg));
 }
 
 /*
- * Is page referenced? - takes vm_page now
+ * Is page referenced?
+ * The page daemon uses this to decide whether to rescue a page from
+ * the inactive queue.  Returning false for all pages (the old stub)
+ * meant no page was ever rescued → immediate eviction → thrashing.
  */
 bool
 pmap_is_referenced(struct vm_page *pg)
 {
-	/* TODO: Implement */
-	return false;
+	return pmap_test_refbit(VM_PAGE_TO_PHYS(pg));
 }
 
 /*
@@ -590,14 +859,54 @@ pmap_pageidlezero(paddr_t pa)
 }
 
 /*
- * Protect a physical page - change protection in all mappings.
- * With the bootloader's static mapping covering all kernel VA, we must
- * not scan/clear hardware PTEs blindly. Stub for now.
+ * Protect a physical page — change or remove all mappings of a given
+ * physical page across ALL user pmaps.
+ *
+ * Called by UVM for:
+ *   VM_PROT_READ — downgrade all mappings to read-only (for COW setup)
+ *   VM_PROT_NONE — remove all mappings (before freeing the page)
+ *
+ * Scans all user pmaps' backing stores for entries mapping this PPN.
+ * Always reads from the backing store (contiguous RAM array) rather
+ * than the hardware PTE window — the backing store is kept in sync by
+ * pmap_enter/pmap_remove/pmap_protect, and scanning RAM is much faster
+ * than 2560 volatile device reads through the MMU window.  Hardware is
+ * only touched on match (0-1 writes per call) for the active pmap.
  */
 void
 pmap_page_protect(struct vm_page *pg, vm_prot_t prot)
 {
-	/* No-op: bootloader mappings must not be disturbed */
+	paddr_t pa = VM_PAGE_TO_PHYS(pg);
+	uint16_t ppn = (pa >> PAGE_SHIFT) & PTE_PPN;
+	struct pmap *pm;
+	uint16_t *ptes;
+	int i;
+
+	/* If full access requested, nothing to restrict */
+	if (prot & VM_PROT_WRITE)
+		return;
+
+	/* Scan all user pmaps' backing stores */
+	for (pm = pmap_allpmaps; pm != NULL; pm = PM_NEXT(pm)) {
+		ptes = PM_USER_PTES(pm);
+		if (ptes == NULL)
+			continue;
+		for (i = 0; i < USER_NPTES; i++) {
+			if ((ptes[i] & (PTE_M | PTE_PPN)) !=
+			    (PTE_M | ppn))
+				continue;
+			if (prot == VM_PROT_NONE)
+				ptes[i] = PTE_INVALID;
+			else
+				ptes[i] &= ~PTE_RW;
+			/* Sync hardware if this is the active pmap */
+			if (pm == pmap_active)
+				pmap_write_pte(
+				    (vaddr_t)(USER_VPN_BASE + i)
+					<< PAGE_SHIFT,
+				    ptes[i]);
+		}
+	}
 }
 
 
@@ -687,12 +996,14 @@ pmap_virtual_space(vaddr_t *startp, vaddr_t *endp)
 }
 
 /*
- * Copy page mappings from one pmap to another
+ * Copy page mappings from one pmap to another.
+ * No-op: UVM handles fork() via COW with pmap_protect() to downgrade
+ * parent pages to read-only, and the child faults in pages on demand.
  */
 void
 pmap_copy(pmap_t dst_pmap, pmap_t src_pmap, vaddr_t dst_addr, vsize_t len, vaddr_t src_addr)
 {
-	/* TODO: Implement if needed for fork() */
+	/* Intentionally empty — COW handles this via fault-on-demand */
 }
 
 /*

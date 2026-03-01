@@ -32,11 +32,15 @@
 void
 cpu_configure(void)
 {
+	/* Run device autoconfiguration */
+	printf("Device autoconfiguration...\n");
+
+	if (config_rootfound("mainbus", NULL) == NULL)
+		panic("autoconfig failed, no root");
+
 	/* Enable interrupts */
 	spl0();
-	
-	/* Run autoconfiguration - minimal stub */
-	printf("Device autoconfiguration...\n");
+	printf("Interrupts enabled.\n");
 }
 
 /*
@@ -45,6 +49,7 @@ cpu_configure(void)
 void
 cpu_rootconf(void)
 {
+	printf("Mounting root filesystem...\n");
 	rootconf();
 }
 

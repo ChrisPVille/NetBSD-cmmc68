@@ -55,7 +55,9 @@ static const struct aes_impl	*const aes_default_impl = &aes_bear64_impl;
 static const struct aes_impl	*const aes_default_impl = &aes_bear_impl;
 #endif
 
+#ifndef NO_CRYPTO_SELFTEST
 static int aes_keysched_selftest(void);
+#endif
 
 static const struct aes_impl	*aes_md_impl	__read_mostly;
 static const struct aes_impl	*aes_impl	__read_mostly;
@@ -114,6 +116,7 @@ aes_select(void)
 
 	KASSERT(aes_impl == NULL);
 
+#ifndef NO_CRYPTO_SELFTEST
 	if (aes_keysched_selftest())
 		panic("AES is busted");
 
@@ -133,6 +136,12 @@ aes_select(void)
 	}
 	if (aes_impl == NULL)
 		panic("AES self-tests failed");
+#else
+	if (aes_md_impl)
+		aes_impl = aes_md_impl;
+	else
+		aes_impl = aes_default_impl;
+#endif
 
 	aprint_debug("aes: %s\n", aes_impl->ai_name);
 	return 0;
@@ -349,6 +358,7 @@ aes_ccm_dec1(const struct aesenc *enc, const uint8_t in[static 16],
 	aes_impl->ai_ccm_dec1(enc, in, out, nbytes, authctr, nrounds);
 }
 
+#ifndef NO_CRYPTO_SELFTEST
 /*
  * Known-answer self-tests for the standard key schedule, used by some
  * drivers for hardware devices that compute AES encryption and
@@ -479,3 +489,4 @@ aes_keysched_selftest(void)
 
 	return 0;
 }
+#endif /* !NO_CRYPTO_SELFTEST */

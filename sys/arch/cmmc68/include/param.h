@@ -57,18 +57,20 @@
  * Minimum and maximum sizes of the kernel malloc arena in PAGE_SIZE-sized
  * logical pages.
  * CMMC68 has limited VA space (4MB total).
- * Kernel image is ~2.35MB (kvm_start=0x23C000), leaving ~1.77MB for
+ * Kernel image is ~2.1MB (virtual_avail=0x217000), leaving ~1.96MB for
  * kmem + submaps. Budget:
- *   kmem_va_arena: 512KB (128 pages) - handles pool pages + large allocs
+ *   kmem_va_arena: 1MB (256 pages) - handles pool pages + large allocs
  *   pager_map:     256KB
  *   exec_map:      256KB (MAXEXEC=1 * NCARGS=256KB)
- *   UBC (ubc_init): 32 wins * 8KB = 256KB
- *   other maps:    ~250KB remaining
+ *   UBC (ubc_init): 8 wins * 8KB = 64KB
+ *   other maps:    ~400KB remaining
  * Physical pages are allocated on demand, so kmem VA size doesn't
  * pre-consume physical RAM.
+ *
+ * 512KB was too small: ls blocked ~90s on vmem (KVA exhaustion).
  */
 #define	NKMEMPAGES_MIN_DEFAULT	((32 * 1024) >> PAGE_SHIFT)   /* 32KB min */
-#define	NKMEMPAGES_MAX_DEFAULT	((512 * 1024) >> PAGE_SHIFT)  /* 512KB max */
+#define	NKMEMPAGES_MAX_DEFAULT	((768 * 1024) >> PAGE_SHIFT)  /* 768KB max */
 
 /*
  * Unified Buffer Cache (UBC) configuration.

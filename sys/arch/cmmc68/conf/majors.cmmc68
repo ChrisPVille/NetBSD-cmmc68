@@ -21,3 +21,4 @@ device-major	md		char 10  block 2	md
 device-major	filedesc	char 11
 device-major	rnd		char 12			rnd
 device-major	ksyms		char 13			ksyms
+device-major	duart		char 14			duart

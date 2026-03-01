@@ -26,7 +26,7 @@ PROG	sbin/umount
 ARGVLN	sh -sh
 
 # libhack.o is built by Makefile & included Makefile.inc
-LIBS	libhack.o -lutil -lterminfo -lcrypt -lm -lprop
+LIBS	libhack.o -ledit -lutil -lterminfo -lcrypt -lm -lprop
 
 # various files that we need in /etc for the install
 COPY	${NETBSDSRCDIR}/etc/master.passwd	etc/master.passwd

@@ -20,8 +20,10 @@ static void
 mainbus_attach(device_t self, device_t parent, void *aux)
 {
 	aprint_normal("\n");
-	
-	/* Attach children */
-	config_search(self, NULL,
-	    CFARGS(.search = config_stdsubmatch));
+
+	/* Manually initialize devices */
+	extern void pit_timer_init(void);
+	extern void duart_hw_init(void);
+	pit_timer_init();
+	duart_hw_init();
 }

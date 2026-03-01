@@ -33,12 +33,16 @@
 #include <machine/mfpreg.h>
 
 /*
- * Serial receive buffer
+ * MFP console ring buffer and softint (defined in mfpcon.c).
+ * The receive interrupt fills this ring buffer; the softint
+ * in mfpcon.c drains it to the tty line discipline.
  */
-#define	SERIAL_BUFFER_SIZE	64
+extern uint8_t mfpcon_rbuf[];
+extern volatile u_int mfpcon_rbget, mfpcon_rbput;
+extern void *mfpcon_si_cookie(void);
 
-static uint8_t rx_buffer[SERIAL_BUFFER_SIZE];
-static int rx_head = 0, rx_tail = 0;
+#define MFPCON_RING_SIZE	64
+#define MFPCON_RING_MASK	(MFPCON_RING_SIZE - 1)
 
 /*
  * MFP interrupt handlers
@@ -51,52 +55,12 @@ void mfp_intr_handler(int);
 void mfp_rcv_intr(void);
 int mfp_putc(int);
 int mfp_getc(void);
-int mfp_getc_wait(void);
-int mfp_peek(void);
 
 /*
- * Initialize the MFP
+ * MFP serial receive interrupt setup is done in cpu_initclocks()
+ * (clock.c) after the MFP vectors are installed.  The transmitter
+ * works with polled I/O from boot via mfp_putc() and needs no init.
  */
-void
-mfp_init(void)
-{
-	/* Reset the MFP */
-	MFP_REGS[MFP_VR] = 0x40;  /* Software reset, vector base = 0x40 */
-
-	/* Disable all interrupts */
-	MFP_REGS[MFP_IERA] = 0x00;
-	MFP_REGS[MFP_IERB] = 0x00;
-
-	/* Unmask all interrupt sources (IMRA/IMRB control masking) */
-	MFP_REGS[MFP_IMRA] = 0xFF;
-	MFP_REGS[MFP_IMRB] = 0xFF;
-
-	/* Initialize UART */
-	MFP_REGS[MFP_UCR] = UCR_RCV_ENABLE | UCR_XMIT_ENABLE |
-	                    UCR_PARITY_NONE | UCR_8BIT | UCR_1STOP;
-
-	/* Clear receive/transmit status */
-	(void)MFP_REGS[MFP_RSR];
-	(void)MFP_REGS[MFP_TSR];
-
-	/* Enable serial interrupts */
-	MFP_REGS[MFP_IERA] |= MFP_IRQ_RCV;   /* Receive interrupt */
-	MFP_REGS[MFP_IERA] |= MFP_IRQ_XMIT;  /* Transmit interrupt */
-
-	/* Initialize timer for system clock */
-	MFP_REGS[MFP_TACR] = TIMER_STOPPED;
-	MFP_REGS[MFP_TADR] = 0x00;  /* Timer count */
-
-	/* Set timer to generate 100 Hz interrupts */
-	/* Assuming 2.4576 MHz crystal */
-	/* Divisor = 2,457,600 / (100 * 4) = 6144 = 0x1800 */
-	MFP_REGS[MFP_TACR] = TIMER_DELAY_4;
-	MFP_REGS[MFP_TADR] = 0x80;  /* High byte */
-	MFP_REGS[MFP_TADR] = 0x00;  /* Low byte */
-
-	/* Enable timer interrupt */
-	MFP_REGS[MFP_IERA] |= MFP_IRQ_TIMER_A;
-}
 
 /*
  * MFP interrupt handler
@@ -123,37 +87,40 @@ mfp_intr_handler(int level)
 }
 
 /*
- * Receive interrupt handler
+ * Receive interrupt handler.
+ * Reads character from MFP UDR, stores in mfpcon ring buffer,
+ * and schedules softint to feed the tty line discipline.
  */
 void
 mfp_rcv_intr(void)
 {
 	uint8_t rsr, data;
-	int next_head;
+	u_int put;
+	void *si;
 
 	/* Read status */
 	rsr = MFP_REGS[MFP_RSR];
 
 	/* Check if character is available */
-	if (!(rsr & RSR_CHAR_AVAILABLE)) {
+	if (!(rsr & RSR_CHAR_AVAILABLE))
 		return;
-	}
 
-	/* Read data */
+	/* Read data (must read UDR to clear interrupt) */
 	data = MFP_REGS[MFP_UDR];
 
-	/* Check for errors */
-	if (rsr & (RSR_OVERRUN_ERROR | RSR_PARITY_ERROR | RSR_FRAMING_ERROR)) {
-		/* Discard character with errors */
+	/* Discard characters with errors */
+	if (rsr & (RSR_OVERRUN_ERROR | RSR_PARITY_ERROR | RSR_FRAMING_ERROR))
 		return;
-	}
 
-	/* Add to receive buffer */
-	next_head = (rx_head + 1) % SERIAL_BUFFER_SIZE;
-	if (next_head != rx_tail) {
-		rx_buffer[rx_head] = data;
-		rx_head = next_head;
-	}
+	/* Store in mfpcon ring buffer */
+	put = mfpcon_rbput;
+	mfpcon_rbuf[put & MFPCON_RING_MASK] = data;
+	mfpcon_rbput = put + 1;
+
+	/* Schedule softint to drain ring to tty */
+	si = mfpcon_si_cookie();
+	if (si != NULL)
+		softint_schedule(si);
 }
 
 /*
@@ -172,50 +139,40 @@ mfp_putc(int c)
 }
 
 /*
- * Get a character from the serial port (non-blocking)
- * Returns -1 if no character available
+ * Get a character from the serial port (polled, non-blocking).
+ * Reads hardware directly — used by cn_tab (kernel console)
+ * during early boot, panic, and debugger when interrupts are off.
+ * Returns -1 if no character available.
  */
 int
 mfp_getc(void)
 {
-	uint8_t data;
-
-	if (rx_head == rx_tail) {
-		return -1;  /* No data available */
-	}
-
-	data = rx_buffer[rx_tail];
-	rx_tail = (rx_tail + 1) % SERIAL_BUFFER_SIZE;
-
-	return data;
+	if (!(MFP_REGS[MFP_RSR] & RSR_CHAR_AVAILABLE))
+		return -1;
+	return MFP_REGS[MFP_UDR];
 }
 
 /*
- * Get a character from the serial port (blocking)
+ * MFP autoconfig
  */
-int
-mfp_getc_wait(void)
+static int mfp_attached;
+
+static int
+mfp_match(device_t parent, cfdata_t cf, void *aux)
 {
-	int c;
-
-	while ((c = mfp_getc()) == -1) {
-		/* Wait for character */
-	}
-
-	return c;
+	return !mfp_attached;
 }
 
-/*
- * Check if character is available
- */
-int
-mfp_peek(void)
+static void
+mfp_attach(device_t self, device_t parent, void *aux)
 {
-	return (rx_head != rx_tail) ? 1 : 0;
+	mfp_attached = 1;
+	aprint_normal(": MC68901 MFP\n");
+
+	/* Attach children (clock) */
+	config_search(self, NULL,
+	    CFARGS(.search = config_stdsubmatch));
 }
 
-/*
- * MFP config attachment declaration
- */
 CFATTACH_DECL_NEW(mfp, 0,
-    NULL, NULL, NULL, NULL);
+    mfp_match, mfp_attach, NULL, NULL);
