@@ -7,4 +7,9 @@
 
 #define	CPU_MAXNUM	1	/* Only one CPU for now */
 
+/* Safe device probing (bus error recovery) */
+extern int *nofault;
+int badaddr(void *);
+int badbaddr(void *);
+
 #endif /* _MACHINE_CPU_H_ */

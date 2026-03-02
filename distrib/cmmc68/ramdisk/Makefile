@@ -5,14 +5,17 @@
 
 IMAGE=		root.fs
 IMAGESIZE=	768k
-MAKEFS_FLAGS+=	-f 10
+MAKEFS_FLAGS+=	-f 2
 WARNS=		1
 DBG=		-Os
 
 CRUNCHBIN=	ramdiskbin
 
 # cmmc68 user VA starts at 0x400000 (kernel occupies 0x0-0x3FFFFF)
-CRUNCHGEN_FLAGS+=	-V LDFLAGS=-Wl,-Ttext-segment=0x400000
+CRUNCHGEN_FLAGS=	-V LDSTATIC=-static \
+	-V DBG="${DBG}" -V NOMAN= -V NOLIBCSANITIZER= \
+	-V NOSANITIZER= -V NOPIE= -V NOSSP= -V NOFORT= \
+	-V LDFLAGS=-Wl,-Ttext-segment=0x400000
 LISTS=		${.CURDIR}/list
 MTREECONF=	${.CURDIR}/mtree.cmmc68
 IMAGEENDIAN=	be

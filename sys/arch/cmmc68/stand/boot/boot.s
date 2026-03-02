@@ -21,7 +21,7 @@
  *
  * Hardware:
  *   MC68010, 24-bit address bus, custom MMU
- *   MMU control: PA 0xFD0001 (context[6:1], enable[0])
+ *   MMU control: PA 0xFD0001 (enable[7], context[6:0])
  *   MMU page table window: PA 0xFD2000 (4096 × 16-bit PTEs)
  *   PTE format: EX(15) | RW(14) | U(13) | M(12) | PPN(11:0)
  *   MFP: PA 0xFFFF00, UDR at PA 0xFFFFEF, TSR at PA 0xFFFFED
@@ -156,9 +156,10 @@ code_start:
     lea     str_mmu(%pc), %a0
     bsr     puts
 
-    /* Disable ROM overlay */
-    move.b  #0x01, 0xFFFFC5            /* DDR bit 0 = output */
-    move.b  #0x01, 0xFFFFC1            /* GPDR bit 0 = disable overlay */
+    /* Note: MFP GPIO pin 0 controls the early boot ROM overlay.
+     * Pin 0 = 1 enables ROM overlay over MFP range (Monitor use only).
+     * Pin 0 = 0 is normal operation.  Leave it alone — the MMU provides
+     * all needed VA→PA translation; the boot overlay at PA 0 is irrelevant. */
 
     /* Jump to kernel at VA 0x0 */
     lea     str_boot(%pc), %a0
@@ -214,10 +215,6 @@ rom_mode:
 
     lea     str_mmu(%pc), %a0
     bsr     puts
-
-    /* Disable ROM overlay */
-    move.b  #0x01, 0xFFFFC5            /* DDR bit 0 = output */
-    move.b  #0x01, 0xFFFFC1            /* GPDR bit 0 = disable overlay */
 
     /* Jump to kernel at VA 0x0 */
     lea     str_boot(%pc), %a0

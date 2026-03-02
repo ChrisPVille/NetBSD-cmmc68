@@ -89,12 +89,14 @@ intr_dispatch(struct clockframe *cf)
 		pit_timer_intr(cf);
 	} else if (vecnum == (DUART_VEC)) {
 		duart_intr();
+	} else if (vecnum == 0x4D) {
+		/* MFP Timer A: fallback system clock (channel 13) */
+		clock_intr(cf);
 	} else if (vecnum == 0x4C) {
 		/* MFP vector 0x4C: Receive Buffer Full (channel 12) */
 		mfp_rcv_intr();
 	} else if (vecnum >= 0x40 && vecnum <= 0x4F) {
-		/* Other MFP vectors (timer, transmit, etc.) */
-		clock_intr(cf);
+		/* Other MFP vectors */
 	}
 }
 

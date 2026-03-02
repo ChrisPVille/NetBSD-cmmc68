@@ -40,7 +40,9 @@
 int clock_intr(void *);
 uint32_t getclocktick(void);
 void clock_handler(struct clockframe *frame);
+void mfp_timer_a_start(void);
 extern void pit_timer_start(void);
+extern int pit_present;
 
 /*
  * Clock interrupt frequency
@@ -52,6 +54,33 @@ extern void pit_timer_start(void);
  * Clock state
  */
 static volatile uint32_t clock_count;
+
+/*
+ * Start MFP Timer A as fallback system clock (~100 Hz).
+ * Used when the PIT expansion card is not present.
+ * Timer A has its own control register (TACR) so it doesn't
+ * interfere with Timer C/D which are used for UART baud rate.
+ *
+ * This is a temporary clock source until PIT hardware is available.
+ */
+void
+mfp_timer_a_start(void)
+{
+	volatile uint8_t *mfp = MFP_REGS;
+
+	/* Stop timer before reconfiguring */
+	mfp[MFP_TACR] = TIMER_STOPPED;
+
+	/* Load Timer A data register */
+	mfp[MFP_TADR] = MFP_TIMER_COUNT;
+
+	/* Start Timer A in delay mode with /200 prescaler */
+	mfp[MFP_TACR] = TIMER_DELAY_200;
+
+	/* Enable Timer A interrupt (IERA bit 5 = channel 13) */
+	mfp[MFP_IERA] |= MFP_IERA_TIMER_A;
+	mfp[MFP_IMRA] |= MFP_IERA_TIMER_A;
+}
 
 /*
  * Initialize clock
@@ -95,8 +124,15 @@ cpu_initclocks(void)
 
 	clock_count = 0;
 
-	/* Start the PIT timer at 100 Hz (replaces MFP Timer A) */
-	pit_timer_start();
+	/* Start the system clock timer */
+	if (pit_present) {
+		pit_timer_start();
+		printf("Clock initialized: 100 Hz (PIT)\n");
+	} else {
+		/* Fallback: MFP Timer A as system clock */
+		mfp_timer_a_start();
+		printf("Clock initialized: ~100 Hz (MFP Timer A)\n");
+	}
 
 	/*
 	 * Seed the entropy pool.
@@ -131,7 +167,6 @@ cpu_initclocks(void)
 		rnd_add_data(&boot_rndsource, seed, sizeof(seed), 256);
 	}
 
-	printf("Clock initialized: %d Hz (PIT)\n", CLOCK_HZ);
 }
 
 /*

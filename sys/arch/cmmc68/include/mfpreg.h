@@ -85,27 +85,48 @@
 #define	TSR_COLLISION		0x20
 
 /*
- * Interrupt source definitions
- * IERA/IPRA/ISRA/IMRA bits
+ * MC68901 interrupt channels.
+ * Vector = VR_base + channel_number.
+ * Channels 0-7 use IERB/IPRB/ISRB/IMRB (bit = channel).
+ * Channels 8-15 use IERA/IPRA/ISRA/IMRA (bit = channel - 8).
  */
-#define	MFP_IRQ_GPIP7	0x80	/* Timer D */
-#define	MFP_IRQ_GPIP6	0x40	/* Timer C */
-#define	MFP_IRQ_GPIP5	0x20	/* Timer B */
-#define	MFP_IRQ_GPIP4	0x10	/* Timer A */
-#define	MFP_IRQ_GPIP3	0x08	/* Link */
-#define	MFP_IRQ_GPIP2	0x04	/* XMIT */
-#define	MFP_IRQ_GPIP1	0x02	/* RCV */
-#define	MFP_IRQ_GPIP0	0x01	/* GPIO0 */
+
+/* IERA/IPRA/ISRA/IMRA bits (channels 8-15) */
+#define	MFP_IERA_GPIP7		0x80	/* Channel 15: GPI 7 */
+#define	MFP_IERA_GPIP6		0x40	/* Channel 14: GPI 6 */
+#define	MFP_IERA_TIMER_A	0x20	/* Channel 13: Timer A */
+#define	MFP_IERA_RCV_FULL	0x10	/* Channel 12: Receive Buffer Full */
+#define	MFP_IERA_RCV_ERR	0x08	/* Channel 11: Receive Error */
+#define	MFP_IERA_XMT_EMPTY	0x04	/* Channel 10: Transmit Buffer Empty */
+#define	MFP_IERA_XMT_ERR	0x02	/* Channel 9: Transmit Error */
+#define	MFP_IERA_TIMER_B	0x01	/* Channel 8: Timer B */
+
+/* IERB/IPRB/ISRB/IMRB bits (channels 0-7) */
+#define	MFP_IERB_GPIP5		0x80	/* Channel 7: GPIO 5 */
+#define	MFP_IERB_GPIP4		0x40	/* Channel 6: GPIO 4 */
+#define	MFP_IERB_TIMER_C	0x20	/* Channel 5: Timer C */
+#define	MFP_IERB_TIMER_D	0x10	/* Channel 4: Timer D */
+#define	MFP_IERB_GPIP3		0x08	/* Channel 3: GPIO 3 */
+#define	MFP_IERB_GPIP2		0x04	/* Channel 2: GPIO 2 */
+#define	MFP_IERB_GPIP1		0x02	/* Channel 1: GPIO 1 */
+#define	MFP_IERB_GPIP0		0x01	/* Channel 0: GPIO 0 */
+
+/* MFP vector numbers (VR base 0x40) */
+#define	MFP_VEC_TIMER_A		0x4D	/* Channel 13 */
+#define	MFP_VEC_RCV_FULL	0x4C	/* Channel 12 */
+#define	MFP_VEC_TIMER_B		0x48	/* Channel 8 */
+#define	MFP_VEC_TIMER_C		0x45	/* Channel 5 */
+#define	MFP_VEC_TIMER_D		0x44	/* Channel 4 */
 
 /*
- * IERB/IPRB/ISRB/IMRB bits
+ * MFP timer clock for fallback system clock (Timer A).
+ * The MC68901 timers are clocked from the XTAL input.
+ * Adjust MFP_XTAL_HZ to match the crystal on your board.
+ * Timer C/D must NOT be used — they provide UART baud rate.
  */
-#define	MFP_IRQ_TIMER_D	0x80
-#define	MFP_IRQ_TIMER_C	0x40
-#define	MFP_IRQ_TIMER_B	0x20
-#define	MFP_IRQ_TIMER_A	0x10
-#define	MFP_IRQ_LINK	0x08
-#define	MFP_IRQ_XMIT	0x02
-#define	MFP_IRQ_RCV	0x01
+#define	MFP_XTAL_HZ		2457600	/* 2.4576 MHz (common for MC68901) */
+#define	MFP_TIMER_HZ		100	/* desired interrupt frequency */
+#define	MFP_TIMER_PRESCALER	200	/* /200 divisor */
+#define	MFP_TIMER_COUNT		(MFP_XTAL_HZ / (MFP_TIMER_PRESCALER * MFP_TIMER_HZ))
 
 #endif /* _CMMC68_MFPREG_H_ */

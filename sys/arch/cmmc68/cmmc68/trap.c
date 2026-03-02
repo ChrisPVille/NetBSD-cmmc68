@@ -29,6 +29,12 @@
 #include <uvm/uvm_extern.h>
 
 /*
+ * nofault — set by badaddr()/badbaddr() to recover from bus errors.
+ * When non-NULL, the bus error handler longjmps here instead of panicking.
+ */
+int *nofault;
+
+/*
  * Function prototypes
  */
 /* buserr and addrerr are defined in locore.s */
@@ -222,6 +228,15 @@ trap(struct frame *fp, int type, u_int code, u_int v)
 		/* NOTREACHED */
 
 	case T_BUSERR:		/* kernel bus error */
+		/*
+		 * Check for badaddr()/badbaddr() probe.
+		 * If nofault is set, longjmp back to the probe caller.
+		 */
+		if (nofault) {
+			longjmp((label_t *)nofault);
+			/* NOTREACHED */
+		}
+
 		/*
 		 * If the fault address is in user space, try uvm_fault
 		 * to demand-page the mapping (e.g. during copyout).

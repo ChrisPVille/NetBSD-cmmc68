@@ -524,10 +524,17 @@ pmap_prot_to_pte(vm_prot_t prot, bool user)
 {
 	uint16_t pte = 0;
 
+	/*
+	 * HACK: MMU rev1 hardware bug — the EX bit gates all accesses,
+	 * not just instruction fetches.  Pages without EX set generate
+	 * bus errors on data read/write.  Work around by always setting
+	 * EX.  Remove this when MMU rev2 hardware is available and
+	 * restore proper NX support:
+	 *   if (prot & VM_PROT_EXECUTE) pte |= PTE_EX;
+	 */
+	pte |= PTE_EX;
 	if (prot & VM_PROT_WRITE)
 		pte |= PTE_RW;
-	if (prot & VM_PROT_EXECUTE)
-		pte |= PTE_EX;
 	if (user)
 		pte |= PTE_U;
 	return pte;

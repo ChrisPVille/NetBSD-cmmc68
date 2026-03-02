@@ -30,6 +30,7 @@ static void pit_attach(device_t, device_t, void *);
 CFATTACH_DECL_NEW(pit, 0,
     pit_match, pit_attach, NULL, NULL);
 
+int pit_present;		/* set by pit_timer_init, checked by cpu_initclocks */
 static int pit_attached;
 
 static int
@@ -70,6 +71,8 @@ pit_timer_init(void)
 {
 	volatile uint8_t *pit = PIT_REGS;
 	extern char intrhand_autovec[];
+
+	pit_present = 1;
 
 	/* Set Timer Interrupt Vector Register */
 	pit[PIT_TIVR] = PIT_TIMER_VEC;

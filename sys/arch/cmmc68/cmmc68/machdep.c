@@ -23,6 +23,8 @@
 #include <machine/vmparam.h>
 #include <machine/frame.h>
 
+#include <machine/cpu.h>
+
 #include <dev/cons.h>
 
 /*
@@ -91,6 +93,47 @@ void machine_userret(struct lwp *);
 int sys_sysarch(struct lwp *, void *, register_t *);
 void straytrap(int, u_short);
 void machine_init(paddr_t);
+
+/*
+ * badaddr — probe a word (16-bit) address, return 1 if bus error.
+ * Used to detect optional hardware before accessing registers.
+ */
+int
+badaddr(void *addr)
+{
+	int i;
+	label_t faultbuf;
+
+	nofault = (int *)&faultbuf;
+	if (setjmp((label_t *)nofault)) {
+		nofault = NULL;
+		return 1;
+	}
+	i = *(volatile short *)addr;
+	__USE(i);
+	nofault = NULL;
+	return 0;
+}
+
+/*
+ * badbaddr — probe a byte (8-bit) address, return 1 if bus error.
+ */
+int
+badbaddr(void *addr)
+{
+	int i;
+	label_t faultbuf;
+
+	nofault = (int *)&faultbuf;
+	if (setjmp((label_t *)nofault)) {
+		nofault = NULL;
+		return 1;
+	}
+	i = *(volatile char *)addr;
+	__USE(i);
+	nofault = NULL;
+	return 0;
+}
 
 /*
  * Boot information
@@ -273,6 +316,9 @@ cpu_startup(void)
         printf("  physmem=%d avail=%d\n", (int)physmem, (int)uvmexp.free);
 
         identifycpu();
+
+        /* HACK: MMU rev1 EX bit bug workaround active */
+        printf("  HACK: MMU rev1 — PTE_EX forced on all pages (no NX)\n");
 
         printf("  text=%lu data=%lu bss=%lu\n",
             (unsigned long)(etext - kernel_text),

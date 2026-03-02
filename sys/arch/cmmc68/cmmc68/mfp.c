@@ -63,27 +63,13 @@ int mfp_getc(void);
  */
 
 /*
- * MFP interrupt handler
- * Called from trap.c for each interrupt level
+ * MFP interrupt handler (legacy, not used).
+ * Interrupt dispatch is handled by intr_dispatch() in intr.c
+ * which routes individual MFP vectors directly.
  */
 void
 mfp_intr_handler(int level)
 {
-	uint8_t ipra;
-
-	/* Read interrupt pending register */
-	ipra = MFP_REGS[MFP_IPRA];
-
-	/* Handle IRQA interrupts */
-	if (ipra & MFP_IRQ_RCV) {
-		mfp_rcv_intr();
-	}
-
-	if (ipra & MFP_IRQ_GPIP4) {
-		/* Timer A interrupt - system clock */
-		extern void clock_handler(void);
-		clock_handler();
-	}
 }
 
 /*
