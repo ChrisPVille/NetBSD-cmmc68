@@ -42,9 +42,7 @@ CPPFLAGS+= -DBUILD_DATE='"${BUILD_DATE:S/00$//:S/00$//:S/00$//}Z"'
 .endif
 
 .ifdef SMALLPROG
-.ifndef SH_FULL
 CPPFLAGS+=-DSMALL
-.endif
 .endif
 .ifdef TINYPROG
 CPPFLAGS+=-DTINY

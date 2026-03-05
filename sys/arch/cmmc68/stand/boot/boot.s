@@ -8,16 +8,23 @@
  *   0x02C-0x02F: Physical load address (0xFFFFFFFF = position-independent)
  *   0x030-0x033: Entry offset (byte offset from image start to payload)
  *   0x034-0x133: Physical range table (32 entries × 8 bytes)
- *   0x134-0x1FF: Reserved (zero-padded)
+ *   0x134-0x137: Kernel binary size (bytes, patched by build.sh)
+ *   0x138-0x13B: Ramdisk image size (bytes, patched by build.sh)
+ *   0x13C-0x1FF: Reserved (zero-padded)
  *   0x200-0xFFF: Executable bootloader code (~3.5KB)
+ *
+ * VA layout (12:3:1 split):
+ *   0x000000-0xBFFFFF  User space (12MB)
+ *   0xC00000-0xEFFFFF  Kernel (3MB)
+ *   0xF00000-0xFFFFFF  I/O hardware (1MB, identity-mapped)
  *
  * Operating modes (auto-detected from PC):
  *   ROM mode:  Bootloader in ROM at PA 0xFE0000, kernel at PA 0x400000
- *              VPN 0x000-0x3FF → PPN 0x400-0x7FF (offset 0x400)
+ *              VPN 0xC00-0xEFF → PPN 0x400-0x6FF (768 pages)
  *   RAM mode:  Bootloader packed with kernel at PA 0x400000
  *              Bootloader=0x400000-0x400FFF, kernel=0x401000+
- *              VPN 0x000-0x3FE → PPN 0x401-0x7FF (offset 0x401)
- *              VPN 0x400 → PPN 0x400 (temporary self-map for execution)
+ *              VPN 0xC00-0xEFF → PPN 0x401+ (768 pages)
+ *              Ramdisk mapped at VPN 0x800+ (supervisor, no PTE_U)
  *
  * Hardware:
  *   MC68010, 24-bit address bus, custom MMU
@@ -27,7 +34,7 @@
  *   MFP: PA 0xFFFF00, UDR at PA 0xFFFFEF, TSR at PA 0xFFFFED
  */
 
-   .global _start
+  .global _start
 
 /* ======================================================================
  * HEADER — 0x000 to 0x1FF (512 bytes)
@@ -43,8 +50,8 @@ img_name:
     .ascii  "NetBSD/cmmc68\0"
     .space  18                          /* pad to 32 bytes total */
 
-    /* 0x028: Total memory required (4MB) */
-    .long   0x00400000
+    /* 0x028: Total memory required (8MB) */
+    .long   0x00800000
 
     /* 0x02C: Physical load address (0xFFFFFFFF = PIC) */
     .long   0xFFFFFFFF
@@ -53,9 +60,9 @@ img_name:
     .long   0x00001000
 
     /* 0x034: Physical range table (32 entries × 8 bytes = 256 bytes) */
-    /* Entry 0: RAM 4MB */
+    /* Entry 0: RAM 8MB */
     .long   0x00400000
-    .long   0x007FFFFF
+    .long   0x00BFFFFF
     /* Entry 1: MMU registers */
     .long   0x00FD0000
     .long   0x00FD3FFF
@@ -65,8 +72,15 @@ img_name:
     /* Entries 3-31: unused (zero) */
     .space  232                         /* 29 entries × 8 bytes */
 
-    /* 0x134-0x1FF: Reserved, zero-padded */
-    .space  204
+    /* 0x134: Kernel binary size (patched by build.sh) */
+kernel_size:
+    .long   0x00000000
+    /* 0x138: Ramdisk image size (patched by build.sh) */
+ramdisk_size:
+    .long   0x00000000
+
+    /* 0x13C-0x1FF: Reserved, zero-padded */
+    .space  196
 
 /* ======================================================================
  * CODE — 0x200 to 0xFFF (~3.5KB available)
@@ -100,71 +114,116 @@ code_start:
 
     /* ======== RAM MODE (packed) ========
      * Bootloader at PA 0x400000, kernel at PA 0x401000
-     * Map VPN 0x000-0x3FE → PPN 0x401-0x7FF (1023 pages)
+     * New VA layout: kernel at 0xC00000, ramdisk at 0x800000
      */
     lea     str_ram(%pc), %a0
     bsr     puts
 
-    /* Map ROM region identity (VPN 0xFE0-0xFFF, 32 pages) */
-    move.l  #0xFD2000 + (0xFE0 * 2), %a0
-    move.l  #0xFE0, %d1
-    move.l  #31, %d2
-1:  move.l  %d1, %d3
-    or.l    #0xF000, %d3
-    move.w  %d3, (%a0)
-    addq.l  #2, %a0
-    addq.l  #1, %d1
-    dbra    %d2, 1b
-
-    /* Map kernel VA: VPN 0x000-0x3FE → PPN 0x401-0x7FF (1023 pages) */
+    /* ---- Step 1: Clear all 4096 PTEs to INVALID ---- */
     move.l  #0xFD2000, %a0
-    move.l  #0x401, %d1                /* PPN starts at 0x401 (PA 0x401000) */
-    move.l  #1022, %d2                 /* 1023 pages - 1 */
-2:  move.l  %d1, %d3
+    move.l  #2047, %d2                  /* 4096/2 - 1 (clear 2 entries per loop) */
+clr_loop:
+    clrl    (%a0)+                      /* clear 2 PTEs (4 bytes = 2 × 16-bit) */
+    dbra    %d2, clr_loop
+
+    /* ---- Step 2: Read kernel_size and ramdisk_size from header ---- */
+    lea     kernel_size(%pc), %a6
+    move.l  (%a6), %d4                  /* d4 = kernel_size (bytes) */
+    lea     ramdisk_size(%pc), %a6
+    move.l  (%a6), %d5                  /* d5 = ramdisk_size (bytes) */
+
+    /* ---- Step 3: Compute ramdisk PPN range ---- */
+    /* Kernel starts at PA 0x401000 (PPN 0x401).
+     * kernel_size is in bytes. Round up to page boundary.
+     * ramdisk_pa_start = 0x401000 + round_page(kernel_size)
+     * ramdisk_ppn_start = ramdisk_pa_start >> 12
+     */
+    move.l  %d4, %d0                    /* d0 = kernel_size */
+    add.l   #0xFFF, %d0                 /* round up */
+    and.l   #0xFFFFF000, %d0            /* mask to page boundary */
+    move.l  #0x401000, %d1
+    add.l   %d0, %d1                    /* d1 = ramdisk PA start */
+    lsr.l   #8, %d1
+    lsr.l   #4, %d1                     /* d1 = ramdisk PPN start */
+
+    /* Compute ramdisk page count */
+    move.l  %d5, %d0                    /* d0 = ramdisk_size */
+    add.l   #0xFFF, %d0                 /* round up */
+    lsr.l   #8, %d0
+    lsr.l   #4, %d0                     /* d0 = ramdisk page count */
+
+    /* ---- Step 4: Map ramdisk at VPN 0x800+ ---- */
+    /* VPN 0x800 = VA 0x800000. Supervisor-only (no PTE_U).
+     * PTE = EX+RW+M | PPN = 0xD000 | PPN
+     */
+    move.l  #0xFD2000 + (0x800 * 2), %a0  /* PTE window + VPN 0x800 offset */
+    move.l  %d1, %d3                    /* d3 = current PPN (ramdisk start) */
+    subq.l  #1, %d0                     /* adjust for dbra */
+    bmi.s   skip_ramdisk                /* skip if no ramdisk pages */
+rd_loop:
+    move.l  %d3, %d6
+    or.l    #0xD000, %d6               /* EX+RW+M, supervisor only */
+    move.w  %d6, (%a0)
+    addq.l  #2, %a0
+    addq.l  #1, %d3
+    dbra    %d0, rd_loop
+skip_ramdisk:
+
+    /* ---- Step 5: Map kernel+free-RAM at VPN 0xC00-0xEFF ---- */
+    /* 768 pages from PPN 0x401 (PA 0x401000)
+     * PTE = EX+RW+M | PPN
+     */
+    move.l  #0xFD2000 + (0xC00 * 2), %a0
+    move.l  #0x401, %d1                /* PPN starts at 0x401 */
+    move.l  #767, %d2                  /* 768 pages - 1 */
+kern_loop:
+    move.l  %d1, %d3
     or.l    #0xD000, %d3               /* EX+RW+M, supervisor only */
     move.w  %d3, (%a0)
     addq.l  #2, %a0
     addq.l  #1, %d1
-    dbra    %d2, 2b
+    dbra    %d2, kern_loop
 
-    /* Map MMU registers identity (VPN 0xFD0-0xFDF, 16 pages) */
-    move.l  #0xFD2000 + (0xFD0 * 2), %a0
-    move.l  #0xFD0, %d1
-    move.l  #15, %d2
-3:  move.l  %d1, %d3
-    or.l    #0xF000, %d3
+    /* ---- Step 6: Map I/O at VPN 0xF00-0xFFF (identity) ---- */
+    move.l  #0xFD2000 + (0xF00 * 2), %a0
+    move.l  #0xF00, %d1
+    move.l  #255, %d2                  /* 256 pages */
+io_loop:
+    move.l  %d1, %d3
+    or.l    #0xF000, %d3               /* EX+RW+M+U (identity, all access) */
     move.w  %d3, (%a0)
     addq.l  #2, %a0
     addq.l  #1, %d1
-    dbra    %d2, 3b
+    dbra    %d2, io_loop
 
-    /* Map VPN 0x3FF → PPN 0x400 (reuse bootloader page for full 4MB VA) */
-    move.l  #0xFD2000 + (0x3FF * 2), %a0
-    move.w  #0xD400, (%a0)              /* PPN 0x400 + EX+RW+M */
+    /* ---- Step 7: Map MMU regs at VPN 0xFD0-0xFDF (identity) ---- */
+    /* Already mapped in step 6 above (F00-FFF includes FD0-FDF) */
 
-    /* Temporary self-map: VPN 0x400 → PPN 0x400 */
+    /* ---- Map temporary self-map for bootloader execution ---- */
+    /* VPN 0x400 → PPN 0x400 so we can keep running at current PC */
     move.l  #0xFD2000 + (0x400 * 2), %a0
     move.w  #0xD400, (%a0)              /* PPN 0x400 + EX+RW+M */
 
     lea     str_page(%pc), %a0
     bsr     puts
 
-    /* Enable MMU, then immediately set stack to mapped VA */
+    /* ---- Step 8: Enable MMU ---- */
     move.b  #0x80, 0xFD0001
-    move.l  #0x003FE000, %sp
+    move.l  #0x00EFE000, %sp            /* new SP in kernel VA space */
 
     lea     str_mmu(%pc), %a0
     bsr     puts
 
-    /* Note: MFP GPIO pin 0 controls the early boot ROM overlay.
-     * Pin 0 = 1 enables ROM overlay over MFP range (Monitor use only).
-     * Pin 0 = 0 is normal operation.  Leave it alone — the MMU provides
-     * all needed VA→PA translation; the boot overlay at PA 0 is irrelevant. */
+    /* ---- Step 9: Pass ramdisk info to kernel ---- */
+    /* %d3 = ramdisk_size, %d4 = ramdisk_va (0x800000) */
+    lea     ramdisk_size(%pc), %a6
+    move.l  (%a6), %d3                  /* d3 = ramdisk_size */
+    move.l  #0x00800000, %d4            /* d4 = ramdisk VA */
 
-    /* Jump to kernel at VA 0x0 */
+    /* ---- Step 10: Jump to kernel at VA 0xC00000 ---- */
     lea     str_boot(%pc), %a0
     bsr     puts
-    jmp     0x0
+    jmp     0xC00000
 
     /* NOT REACHED */
 
@@ -173,53 +232,55 @@ rom_mode:
     lea     str_rom(%pc), %a0
     bsr     puts
 
-    /* Map ROM region identity (VPN 0xFE0-0xFFF, 32 pages) */
-    move.l  #0xFD2000 + (0xFE0 * 2), %a0
-    move.l  #0xFE0, %d1
-    move.l  #31, %d2
-4:  move.l  %d1, %d3
-    or.l    #0xF000, %d3
-    move.w  %d3, (%a0)
-    addq.l  #2, %a0
-    addq.l  #1, %d1
-    dbra    %d2, 4b
-
-    /* Map kernel VA: VPN 0x000-0x3FF → PPN 0x400-0x7FF (1024 pages) */
+    /* ---- Clear all 4096 PTEs to INVALID ---- */
     move.l  #0xFD2000, %a0
+    move.l  #2047, %d2
+rom_clr:
+    clrl    (%a0)+
+    dbra    %d2, rom_clr
+
+    /* ---- Map kernel VA: VPN 0xC00-0xEFF → PPN 0x400-0x6FF (768 pages) ---- */
+    move.l  #0xFD2000 + (0xC00 * 2), %a0
     move.l  #0x400, %d1                /* PPN starts at 0x400 (PA 0x400000) */
-    move.l  #1023, %d2                 /* 1024 pages - 1 */
-5:  move.l  %d1, %d3
+    move.l  #767, %d2                  /* 768 pages - 1 */
+rom_kern:
+    move.l  %d1, %d3
     or.l    #0xD000, %d3               /* EX+RW+M, supervisor only */
     move.w  %d3, (%a0)
     addq.l  #2, %a0
     addq.l  #1, %d1
-    dbra    %d2, 5b
+    dbra    %d2, rom_kern
 
-    /* Map MMU registers identity (VPN 0xFD0-0xFDF, 16 pages) */
-    move.l  #0xFD2000 + (0xFD0 * 2), %a0
-    move.l  #0xFD0, %d1
-    move.l  #15, %d2
-6:  move.l  %d1, %d3
+    /* ---- Map I/O at VPN 0xF00-0xFFF (identity, 256 pages) ---- */
+    move.l  #0xFD2000 + (0xF00 * 2), %a0
+    move.l  #0xF00, %d1
+    move.l  #255, %d2
+rom_io:
+    move.l  %d1, %d3
     or.l    #0xF000, %d3
     move.w  %d3, (%a0)
     addq.l  #2, %a0
     addq.l  #1, %d1
-    dbra    %d2, 6b
+    dbra    %d2, rom_io
 
     lea     str_page(%pc), %a0
     bsr     puts
 
-    /* Enable MMU, then immediately set stack to mapped VA */
+    /* Enable MMU, set stack */
     move.b  #0x80, 0xFD0001
-    move.l  #0x003FF000, %sp
+    move.l  #0x00EFE000, %sp
 
     lea     str_mmu(%pc), %a0
     bsr     puts
 
-    /* Jump to kernel at VA 0x0 */
+    /* No ramdisk in ROM mode */
+    moveq   #0, %d3                    /* ramdisk_size = 0 */
+    moveq   #0, %d4                    /* ramdisk_va = 0 */
+
+    /* Jump to kernel at VA 0xC00000 */
     lea     str_boot(%pc), %a0
     bsr     puts
-    jmp     0x0
+    jmp     0xC00000
 
     /* NOT REACHED */
 spin:
@@ -247,7 +308,7 @@ puts:
  * String table — kept compact, shares the trailing CRLF where possible
  * ====================================================================== */
 str_banner:
-    .ascii  "\r\nCMMC-68 Bootloader v0.2\r\n\0"
+    .ascii  "\r\nCMMC-68 Bootloader v0.3\r\n\0"
 str_image:
     .ascii  "Image: \0"
 str_rom:

@@ -1584,6 +1584,7 @@ copyoutpsstrs(struct execve_data * restrict data, struct proc *p)
 	/* fill process ps_strings info */
 	p->p_psstrp = (vaddr_t)STACK_ALLOC(STACK_GROW(epp->ep_minsaddr,
 	    STACK_PTHREADSPACE), data->ed_ps_strings_sz);
+	/* ps_strings setup */
 
 	if (epp->ep_flags & EXEC_32) {
 		aip = &arginfo32;

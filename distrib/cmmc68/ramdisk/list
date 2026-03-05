@@ -1,6 +1,6 @@
 #	$NetBSD$
 
-SRCDIRS bin sbin usr.bin
+SRCDIRS bin sbin usr.bin libexec external/bsd/less/bin
 
 # copy the crunched binary, link to it, and kill it
 PROG	bin/cat
@@ -27,13 +27,29 @@ PROG	bin/df
 PROG	sbin/sysctl
 PROG	sbin/vmstat
 
+PROG	libexec/getty
+PROG	usr/bin/login
+
 PROG	bin/ps
-PROG	sbin/pmap
 PROG	bin/kill
+PROG	bin/stty
 PROG	bin/uname
 PROG	bin/id
 PROG	bin/dd
 PROG	bin/sleep
+PROG	bin/mv
+PROG	bin/date
+PROG	bin/hostname
+PROG	bin/test	bin/[
+PROG	bin/expr
+PROG	bin/chown	bin/chgrp
+
+PROG	usr/bin/head
+PROG	usr/bin/tail
+PROG	usr/bin/wc
+PROG	usr/bin/tee
+PROG	usr/bin/who
+PROG	usr/bin/less	usr/bin/more
 
 ARGVLN	sh -sh
 
@@ -41,8 +57,14 @@ ARGVLN	sh -sh
 LIBS	libhack.o -ledit -lutil -lterminfo -lcrypt -lkvm -lm -lprop
 
 # various files that we need in /etc for the install
-COPY	${NETBSDSRCDIR}/etc/master.passwd	etc/master.passwd
+COPY	${CURDIR}/master.passwd			etc/master.passwd
 COPY	${NETBSDSRCDIR}/etc/group		etc/group
+COPY	${CURDIR}/etc.rc			etc/rc		555
+COPY	${CURDIR}/gettytab			etc/gettytab
+COPY	${NETBSDSRCDIR}/etc/etc.cmmc68/ttys	etc/ttys
+COPY	${CURDIR}/motd				etc/motd
 
-# shell profile
+# shell profile and hushlogin (suppress copyright from login)
 COPY	${CURDIR}/dot.profile			.profile
+COPY	${CURDIR}/dot.profile			root/.profile
+COPY	${CURDIR}/hushlogin			root/.hushlogin

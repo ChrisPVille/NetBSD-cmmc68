@@ -9,8 +9,8 @@ __PAGE_SIZE = 0x1000;
 ENTRY(_start)
 SECTIONS
 {
-	/* Kernel starts at 0x00000000 for our setup */
-	. = 0x00000000;
+	/* Kernel starts at 0x00C00000 (12:3:1 VA split) */
+	. = 0x00C00000;
 
 	.text :
 	{

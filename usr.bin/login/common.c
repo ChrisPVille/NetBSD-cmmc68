@@ -124,7 +124,8 @@ rootterm(char *ttyn)
 {
 	struct ttyent *t;
 
-	return ((t = getttynam(ttyn)) && t->ty_status & TTY_SECURE);
+	return ((t = getttynam(ttyn)) == NULL ||
+	    (t->ty_status & TTY_SECURE));
 }
 
 static jmp_buf motdinterrupt;

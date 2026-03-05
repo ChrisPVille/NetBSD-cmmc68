@@ -26,6 +26,14 @@
 #include <machine/cpu.h>
 
 #include <dev/cons.h>
+#include <dev/md.h>
+
+#include "opt_md.h"
+
+#include "opt_consdev.h"
+#ifdef CONSDEV_DUART
+#include <machine/duartreg.h>
+#endif
 
 /*
  * Global symbols for kernel
@@ -72,6 +80,76 @@ static struct consdev cmmc68_consdev = {
 	.cn_dev = 0,	/* Initialized to makedev(7,0) in consinit */
 	.cn_pri = CN_REMOTE,
 };
+
+#ifdef CONSDEV_DUART
+/*
+ * DUART polled console functions.
+ * Minimal channel A setup — runs before duart_hw_init() / duart_attach().
+ * Later reinit by the attach routine is safe (full reset sequence).
+ */
+static void
+duart_cons_init(void)
+{
+	volatile uint8_t *du = DUART_REGS;
+	volatile uint8_t *ch = du;	/* Channel A at offset 0 */
+
+	/* Reset channel A */
+	ch[DU_CRA] = CR_RST_MR;
+	ch[DU_CRA] = CR_RST_RX;
+	ch[DU_CRA] = CR_RST_TX;
+	ch[DU_CRA] = CR_RST_ERR;
+
+	/* Configure 19200 8N1 */
+	ch[DU_CRA] = CR_RST_MR;		/* Point to MR1 */
+	ch[DU_MRA] = MR1_CS8 | MR1_PNONE;	/* 8-bit, no parity */
+	ch[DU_MRA] = MR2_STOP1;		/* 1 stop bit */
+
+	/* Baud rate set 2, 19200 */
+	du[DU_ACR] = ACR_SET2;
+	du[DU_CSRA] = CSR_19200;
+
+	/* Disable all interrupts (polled mode) */
+	du[DU_IMR] = 0;
+
+	/* Enable TX and RX */
+	ch[DU_CRA] = CR_ENA_TX | CR_ENA_RX;
+}
+
+static void
+duart_cnputc(dev_t dev, int c)
+{
+	volatile uint8_t *du = DUART_REGS;
+
+	/* Wait for TX ready */
+	while ((du[DU_SRA] & SR_TXRDY) == 0)
+		;
+	du[DU_THRA] = c;
+}
+
+static int
+duart_cngetc(dev_t dev)
+{
+	volatile uint8_t *du = DUART_REGS;
+
+	/* Wait for RX ready */
+	while ((du[DU_SRA] & SR_RXRDY) == 0)
+		;
+	return du[DU_RHRA];
+}
+
+static void
+duart_cnpollc(dev_t dev, int on)
+{
+}
+
+static struct consdev duart_consdev = {
+	.cn_putc = duart_cnputc,
+	.cn_getc = duart_cngetc,
+	.cn_pollc = duart_cnpollc,
+	.cn_dev = 0,	/* Initialized to makedev(14,0) in consinit */
+	.cn_pri = CN_REMOTE,
+};
+#endif /* CONSDEV_DUART */
 
 /*
  * Function prototypes
@@ -136,6 +214,12 @@ badbaddr(void *addr)
 }
 
 /*
+ * Ramdisk info from bootloader (saved in locore.s _start)
+ */
+extern volatile uint32_t ramdisk_size;
+extern volatile uint32_t ramdisk_va;
+
+/*
  * Boot information
  */
 struct bootinfo bootinfo;
@@ -164,9 +248,11 @@ int avail_start, avail_end;
 void
 bootinfo_init(void)
 {
-	bootinfo.bi_memsize = 0x400000;	/* 4 MB */
+	bootinfo.bi_memsize = 0x800000;	/* 8 MB */
 	bootinfo.bi_kernelstart = (uint32_t)kernel_text;
 	bootinfo.bi_kernelend = (uint32_t)end;
+	bootinfo.bi_ramdisk_va = ramdisk_va;
+	bootinfo.bi_ramdisk_size = ramdisk_size;
 }
 
 /*
@@ -209,7 +295,7 @@ cpu_halt(void)
  *
  * The 'reset' instruction clears the MMU context register, putting
  * the MMU into bypass mode (VA = PA).  After that, code at kernel VA
- * (0x000XXXXX mapped to PA 0x400000+) is no longer reachable.
+ * (0xC0XXXX mapped to PA 0x400000+) is no longer reachable.
  *
  * Solution: write a small trampoline to monitor SRAM at 0xFF0000,
  * which is identity-mapped (VA = PA both with and without MMU).
@@ -313,7 +399,11 @@ cpu_startup(void)
             (unsigned long)kernel_pa_offset,
             (unsigned long)virtual_avail,
             (unsigned long)virtual_end);
-        printf("  physmem=%d avail=%d\n", (int)physmem, (int)uvmexp.free);
+        printf("  physmem=%d avail=%d\n", (int)physmem, uvm_availmem(false));
+        if (ramdisk_size > 0)
+                printf("  ramdisk: va=0x%lx size=%lu\n",
+                    (unsigned long)ramdisk_va,
+                    (unsigned long)ramdisk_size);
 
         identifycpu();
 
@@ -325,6 +415,8 @@ cpu_startup(void)
             (unsigned long)(edata - etext),
             (unsigned long)(end - edata));
         printf("Initializing kernel subsystems...\n");
+        printf("  free KVA = %luKB\n",
+            (unsigned long)(virtual_end - virtual_avail) / 1024);
 }
 
 /*
@@ -333,9 +425,14 @@ cpu_startup(void)
 void
 consinit(void)
 {
-	/* com0 is at cdevsw index 7, unit 0 */
-	cmmc68_consdev.cn_dev = makedev(7, 0);
+#ifdef CONSDEV_DUART
+	duart_cons_init();
+	duart_consdev.cn_dev = makedev(14, 0);	/* duart cdevsw, channel A */
+	cn_set_tab(&duart_consdev);
+#else
+	cmmc68_consdev.cn_dev = makedev(7, 0);	/* mfpcon cdevsw */
 	cn_set_tab(&cmmc68_consdev);
+#endif
 }
 
 /*
@@ -375,4 +472,17 @@ machine_init(paddr_t nextpa)
 {
 	/* Initialize boot information */
 	bootinfo_init();
+
+#ifdef MEMORY_DISK_DYNAMIC
+	/*
+	 * Configure memory disk root from bootloader-loaded ramdisk.
+	 * The ramdisk is mapped by the bootloader at a user-range VA
+	 * (typically 0x800000) with supervisor-only access (no PTE_U).
+	 * md_root_setconf() tells md(4) where to find it.
+	 */
+	if (ramdisk_size > 0 && ramdisk_va != 0) {
+		md_root_setconf((void *)(uintptr_t)ramdisk_va,
+		    (size_t)ramdisk_size);
+	}
+#endif
 }

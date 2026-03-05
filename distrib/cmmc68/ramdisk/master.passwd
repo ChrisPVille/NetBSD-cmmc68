@@ -1,0 +1,2 @@
+root:xxyG8tf9oyhyA:0:0::0:0:Charlie &:/root:/bin/sh
+nobody:*:32767:39::0:0:Unprivileged user:/nonexistent:/sbin/nologin

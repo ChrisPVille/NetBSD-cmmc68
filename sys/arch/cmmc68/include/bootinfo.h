@@ -37,6 +37,8 @@ struct bootinfo {
 	uint32_t bi_kernelstart;	/* Kernel start address */
 	uint32_t bi_kernelend;		/* Kernel end address */
 	uint32_t bi_sysname;		/* System name (pointer) */
+	uint32_t bi_ramdisk_va;	/* Ramdisk virtual address (0 = none) */
+	uint32_t bi_ramdisk_size;	/* Ramdisk size in bytes */
 };
 
 #ifdef _KERNEL

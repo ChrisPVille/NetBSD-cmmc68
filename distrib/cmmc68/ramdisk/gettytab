@@ -1,0 +1,9 @@
+#
+# Minimal gettytab for CMMC68
+#
+default:\
+	:np:sp#19200:
+Pc:\
+	:sp#19200:
+std.19200:\
+	:sp#19200:

@@ -1,0 +1,23 @@
+#!/bin/sh
+#
+# Minimal rc for CMMC68 ramdisk
+#
+# init(8) runs this as: sh /etc/rc autoboot
+# Exit 0 to transition to multi-user mode (init spawns gettys from /etc/ttys).
+
+PATH=/bin:/sbin:/usr/bin
+export PATH
+
+# Remount root read-write (memory disk is mounted read-only by default)
+mount -t ffs -u -o rw /dev/md0a /
+
+# Create login accounting files so login(1) doesn't complain
+: > /var/run/utmpx
+: > /var/log/wtmpx
+: > /var/log/lastlogx
+
+echo ""
+echo "NetBSD/cmmc68"
+echo ""
+
+exit 0

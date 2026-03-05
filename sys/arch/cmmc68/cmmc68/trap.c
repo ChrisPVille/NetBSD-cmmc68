@@ -81,7 +81,7 @@ short exframesize[] = {
 	0,		/* type 4 - access error (68060) */
 	-1, -1,		/* type 5-6 - undefined */
 	0,		/* type 7 - access error (68040) */
-	58,		/* type 8 - bus fault (68010) */
+	50,		/* type 8 - bus fault (68010) FMT8SIZE */
 	0,		/* type 9 - coprocessor mid-instruction (68020) */
 	0,		/* type A - short bus fault (68020) */
 	0,		/* type B - long bus fault (68020) */
@@ -218,8 +218,8 @@ trap(struct frame *fp, int type, u_int code, u_int v)
 				u_int retaddr = cfp[1];
 				printf("  frame[%d]: fp=%p ret=0x%x\n",
 				    depth, (void *)cfp, retaddr);
-				if ((vaddr_t)nextfp < 0x1000 ||
-				    (vaddr_t)nextfp > 0x3FFFFF)
+				if ((vaddr_t)nextfp < 0xC01000 ||
+				    (vaddr_t)nextfp > 0xEFFFFF)
 					break;
 				cfp = nextfp;
 			}
@@ -266,7 +266,8 @@ trap(struct frame *fp, int type, u_int code, u_int v)
 		 * The UBC read path relies on page faults to trigger
 		 * genfs_getpages when file data needs loading.
 		 */
-		if (v < VM_MAX_KERNEL_ADDRESS) {
+		if (v >= VM_MIN_KERNEL_ADDRESS &&
+		    v < VM_MAX_KERNEL_ADDRESS) {
 			vaddr_t va = trunc_page(v);
 			vm_prot_t ftype;
 
@@ -305,6 +306,7 @@ trap(struct frame *fp, int type, u_int code, u_int v)
 
 	case T_BUSERR|T_USER:	/* user bus error */
 	case T_ADDRERR|T_USER:	/* user address error */
+		/* fall through to demand-page handling */
 		/*
 		 * On CMMC68, the custom MMU generates bus errors for
 		 * unmapped pages (no separate MMU fault vector).

@@ -13,6 +13,9 @@ maxusers 2 8 64
 # CPU options
 defflag	opt_cpubrand.h	M68K_MMU_CMMC68
 
+# Console device selection
+defflag	opt_consdev.h	CONSDEV_DUART
+
 # Machine-dependent files
 # Note: locore.s is handled specially via MD_OBJS in Makefile.cmmc68
 file	arch/cmmc68/cmmc68/machdep.c

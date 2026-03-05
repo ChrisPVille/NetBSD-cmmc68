@@ -1,0 +1,7 @@
+#	$NetBSD$
+#
+# name		getty				type	status		comments
+#
+console		"/libexec/getty Pc"		vt100	on  secure
+ttyd0		"/libexec/getty std.19200"	vt100	off secure
+ttyd1		"/libexec/getty std.19200"	vt100	off secure

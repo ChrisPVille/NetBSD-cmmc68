@@ -220,6 +220,7 @@ syscall_plain(register_t code, struct lwp *l, struct frame *frame)
 
 	rval[0] = 0;
 	rval[1] = frame->f_regs[D1];
+
 	error = sy_call(callp, l, args, rval);
 
 	switch (error) {

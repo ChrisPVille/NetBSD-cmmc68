@@ -390,7 +390,6 @@ ufs_lookup(void *v)
 	if (VOP_ISLOCKED(vdp) != LK_EXCLUSIVE) {
 		return ENOLCK;
 	}
-
 	/*
 	 * Produce the auxiliary lookup results into i_crap. Increment
 	 * its serial number so elsewhere we can tell if we're using

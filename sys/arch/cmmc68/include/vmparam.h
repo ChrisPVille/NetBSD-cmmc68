@@ -19,23 +19,26 @@
 
 /*
  * CMMC68 Virtual Address Space Layout (MC68010, 24-bit, custom MMU)
+ * 12:3:1 split — User : Kernel : I/O
  *
- * VA 0x000000-0x3FFFFF  Kernel (4MB, mapped to PA 0x400000 by bootloader)
- * VA 0x400000-0xDFFFFF  User space (10MB, per-process dynamic mapping)
- * VA 0xFD0000-0xFD3FFF  MMU registers (supervisor-only, bypasses translation)
- * VA 0xFE0000-0xFFFFFF  ROM/IO/MFP (identity mapped)
+ * VA 0x000000-0xBFFFFF  User space (12MB, per-process dynamic mapping)
+ * VA 0xC00000-0xEFFFFF  Kernel (3MB text/data/bss + free KVA)
+ * VA 0xF00000-0xFFFFFF  I/O hardware (1MB, identity mapped, supervisor-only)
+ *
+ * Ramdisk is mapped by bootloader at VA 0x800000 (supervisor-only,
+ * no PTE_U) and accessed by md(4) through that pointer.
  */
 
 /*
  * User and kernel address space boundaries
  */
-#define	VM_MIN_USER_ADDRESS	((vaddr_t)0x00400000)
-#define	VM_MAX_USER_ADDRESS	((vaddr_t)0x00E00000)
-#define	VM_MAXUSER_ADDRESS	((vaddr_t)0x00E00000)
+#define	VM_MIN_USER_ADDRESS	((vaddr_t)0x00000000)
+#define	VM_MAX_USER_ADDRESS	((vaddr_t)0x00C00000)
+#define	VM_MAXUSER_ADDRESS	((vaddr_t)0x00C00000)
 #define	VM_MIN_ADDRESS		((vaddr_t)0x00000000)
 
-#define	VM_MIN_KERNEL_ADDRESS	((vaddr_t)0x00000000)
-#define	VM_MAX_KERNEL_ADDRESS	((vaddr_t)0x003FFFFF)
+#define	VM_MIN_KERNEL_ADDRESS	((vaddr_t)0x00C00000)
+#define	VM_MAX_KERNEL_ADDRESS	((vaddr_t)0x00F00000)
 
 /*
  * MMU and device address space (identity mapped, supervisor-only)
@@ -54,12 +57,36 @@
 
 /*
  * User address space layout
+ * USRSTACK at top of user VA (0xC00000), stack grows down.
+ * Programs link at VA 0x1000 (page 1); page 0 is null guard.
+ * Low placement enables m68k short addressing modes.
+ *
+ * Data (heap) limits set to full user VA — brk() grows freely
+ * until it collides with the stack region in uvm_map().
+ *
+ * Stack limits must be explicit because exec reserves the full
+ * MAXSSIZ as address space upfront (PROT_NONE for demand-fault
+ * growth).  USRSTACK - MAXSSIZ must stay above the highest
+ * plausible program end.
  */
-#define	USRSTACK		0x00E00000	/* Top of user stack */
-#define	MAXSSIZ			(2*1024*1024)	/* Max stack size (2MB) */
-#define	DFLSSIZ			(2*1024*1024)	/* Default stack size (2MB) */
-#define	MAXDSIZ			(4*1024*1024)	/* Max data segment size (4MB) */
-#define	DFLDSIZ			(1*1024*1024)	/* Default data segment size (1MB) */
+#define	USRSTACK		0x00C00000	/* Top of user stack */
+#define	MAXSSIZ			(2*1024*1024)	/* 2 MB — noaccess base at 0xA00000 */
+#define	DFLSSIZ			(512*1024)	/* 512 KB initial accessible stack */
+#define	MAXDSIZ			VM_MAXUSER_ADDRESS  /* uncapped — uvm_map enforces */
+#define	DFLDSIZ			VM_MAXUSER_ADDRESS  /* uncapped — uvm_map enforces */
+
+/*
+ * mmap hint address override.
+ *
+ * The default VM_DEFAULT_ADDRESS_BOTTOMUP computes:
+ *   round_page(data_addr + maxdmap)
+ * On a 24-bit address space (12 MB user VA), maxdmap = MAXDSIZ can push
+ * the hint past VM_MAXUSER_ADDRESS, causing mmap(0,...) to fail with
+ * ENOMEM.  Override to hint right after the data segment and let the
+ * uvm allocator find free space.
+ */
+#define	VM_DEFAULT_ADDRESS_BOTTOMUP(da, sz) \
+	round_page((vaddr_t)(da))
 
 /*
  * Kernel map sizing
@@ -91,7 +118,9 @@
 #define	VM_MAP_SIZE(vmsize)	round_page((vmsize) / 4)
 
 /*
- * Kernel PA offset: the physical address that VA 0x0 maps to.
+ * Kernel PA offset: the physical address that VA KERNBASE maps to.
+ *   PA = (VA - KERNBASE) + kernel_pa_offset
+ *   VA = (PA - kernel_pa_offset) + KERNBASE
  * Auto-detected from MMU hardware during bootstrap.
  */
 #ifdef _KERNEL

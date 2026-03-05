@@ -106,6 +106,7 @@ md_attach_hook(int unit, struct md_conf *md)
 		md->md_type = MD_KMEM_FIXED;
 		format_bytes(pbuf, sizeof(pbuf), md->md_size);
 		aprint_verbose("md%d: internal %s image area\n", unit, pbuf);
+		/* (debug code removed) */
 	}
 }
 

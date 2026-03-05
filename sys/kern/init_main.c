@@ -666,23 +666,13 @@ main(void)
 	module_init_class(MODULE_CLASS_ANY);
 	module_builtin_require_force();
 
-	/*
-	 * Finalize configuration now that all real devices have been
-	 * found.  This needs to be done before the root device is
-	 * selected, since finalization may create the root device.
-	 */
 	config_finalize();
 
 	sysctl_finalize();
 
-	/*
-	 * Now that autoconfiguration has completed, we can determine
-	 * the root and dump devices.
-	 */
 	cpu_rootconf();
 	cpu_dumpconf();
 
-	/* Mount the root file system. */
 	do {
 		domountroothook(root_device);
 		if ((error = vfs_mountroot())) {
@@ -840,10 +830,6 @@ configure2(void)
 	 */
 	config_twiddle_fn(NULL);
 
-	/*
-	 * Create threads to call back and finish configuration for
-	 * devices that want interrupts enabled.
-	 */
 	config_create_interruptthreads();
 }
 

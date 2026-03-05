@@ -55,10 +55,14 @@
 #include <machine/trap.h>
 
 /*
- * CMMC68 Memory Map:
- *   VA 0x000000-0x3FFFFF  Kernel (mapped to PA 0x400000 by bootloader)
- *   VA 0x400000-0xDFFFFF  User space
- *   VA 0xFD0000-0xFFFFFF  MMU/devices/ROM (identity mapped)
+ * CMMC68 Memory Map (12:3:1 split):
+ *   VA 0x000000-0xBFFFFF  User space (12MB)
+ *   VA 0xC00000-0xEFFFFF  Kernel (3MB, mapped to PA 0x401000+ by bootloader)
+ *   VA 0xF00000-0xFFFFFF  I/O hardware (1MB, identity mapped)
+ *
+ * Bootloader passes ramdisk info:
+ *   %d3 = ramdisk_size (bytes, 0 if none)
+ *   %d4 = ramdisk_va (0x800000 if present, 0 if none)
  */
 
 /*
@@ -100,12 +104,19 @@ ASENTRY_NOPROFILE(start)
 	movw	#PSL_HIGHIPL,%sr	| no interrupts
 
 	/*
-	 * On CMMC68, the kernel is running at virtual 0x0 with MMU already enabled
-	 * by bootloader. The kernel is loaded at physical 0x400000.
-	 * Since bootloader mapped VA 0x0 -> PA 0x400000, no relocation needed.
-	 * The relocation offset is 0.
+	 * On CMMC68, the kernel is running at VA 0xC00000 with MMU already
+	 * enabled by bootloader. Kernel is loaded at PA 0x401000 (RAM mode).
+	 * Bootloader passes ramdisk info in %d3 (size) and %d4 (VA).
+	 * Since we're running at linked address, relocation offset is 0.
 	 */
 	movl	#0, %a5		| relocation offset is 0 (running at linked address)
+
+	/*
+	 * Save ramdisk info from bootloader before anything clobbers %d3/%d4.
+	 * Store to globals using absolute addresses (linker-resolved).
+	 */
+	movl	%d3, _C_LABEL(ramdisk_size)
+	movl	%d4, _C_LABEL(ramdisk_va)
 
 	ASRELOC(tmpstk, %a0)
 	movl	%a0,%sp			| give ourselves a temporary stack
@@ -118,40 +129,46 @@ ASENTRY_NOPROFILE(start)
 	dbra	%d0,1b
 
 	/*
-	 * Zero all free RAM from end of kernel to end of VA space.
-	 * Pool/UVM page allocations come from this memory and expect
-	 * it to be zeroed (no pmap_zero_page in pool_page_alloc path).
-	 * Can't use dbra — count exceeds 16 bits.
+	 * Re-save ramdisk info after BSS clear (the globals are in .data,
+	 * not .bss, so they survived BSS clear — but re-save to be safe
+	 * since we just clobbered registers during BSS clear loop).
+	 * Actually, the BSS clear only touches edata..end, and our
+	 * .data globals were written before that. But the dbra clobbered
+	 * %d0. %d3/%d4 are still valid.
 	 */
-	movl	#_C_LABEL(end),%a0	| start at end of kernel
-	movl	#0x003FFFFC,%d0		| last long in kernel VA space
-	subl	#_C_LABEL(end),%d0	| bytes to zero
-	lsrl	#2,%d0			| convert to longs
-2:	clrl	%a0@+
-	subql	#1,%d0
-	bne	2b
+	movl	%d3, _C_LABEL(ramdisk_size)
+	movl	%d4, _C_LABEL(ramdisk_va)
+
+	/*
+	 * DO NOT zero free RAM here. With the ramdisk loaded
+	 * contiguously after the kernel in physical memory,
+	 * kernel VA end maps to PAs WITHIN the ramdisk range.
+	 * Zeroing kernel VA would destroy ramdisk data.
+	 * UVM's pmap_zero_page will zero pages on demand.
+	 */
 
 	/*
 	 * Save the end of loaded kernel for pmap bootstrap.
-	 * Read the MMU PTE for VPN 0 to determine kernel PA offset
+	 * Read the MMU PTE for VPN 0xC00 to determine kernel PA offset
 	 * dynamically.  This supports both ROM mode (offset 0x400000)
 	 * and packed RAM mode (offset 0x401000).
 	 */
 	movl	#_C_LABEL(end),%d7	| virtual address of end of kernel
 	clrl	%d6
-	movw	0xFD2000,%d6		| read PTE[0] — PPN in bits 11:0
+	movw	0xFD2000+(0xC00*2),%d6	| read PTE[0xC00] — PPN in bits 11:0
 	andl	#0x0FFF,%d6		| mask to PPN only
 	lsll	#8,%d6			| shift left 8
 	lsll	#4,%d6			| shift left 4 more (total << 12)
-	addl	%d6,%d7			| PA = VA + kernel_pa_offset
+	| d7 = end VA, d6 = PPN<<12 of VPN 0xC00
+	| nextpa = end_VA - KERNBASE + PPN<<12
+	subl	#0xC00000,%d7		| d7 = end_VA - KERNBASE (offset within kernel)
+	addl	%d6,%d7			| d7 = nextpa (PA of kernel end)
 
 	/* NOTE: %d7 is now off-limits!! */
 
 	/*
-	 * Initialize the custom MMU for identity mapping.
-	 * On CMMC68, the MMU is a simple custom design.
+	 * Call pmap_bootstrap1 to set up kernel pmap.
 	 */
-	/* Call pmap_bootstrap1 to set up the MMU */
 	pea	%a5@			| reloff (should be 0)
 	movl	%d7,%sp@-		| nextpa
 	RELOC(pmap_bootstrap1,%a0)
@@ -164,7 +181,7 @@ ASENTRY_NOPROFILE(start)
 /*
  * Enable the MMU.
  * On CMMC68, MMU is already enabled by bootloader, skip the standard enable code.
- * The bootloader has already set up VA 0x0 -> PA 0x400000 mapping.
+ * The bootloader has already set up VA 0xC00000 -> PA 0x401000 mapping.
  */
 	| Skip MMU enable since bootloader already did it
 
@@ -560,3 +577,12 @@ GLOBAL(cputype)
 
 GLOBAL(fputype)
 	.long	0	| FPU_NONE - No FPU, 68010 has no coprocessor interface
+
+/*
+ * Ramdisk info from bootloader (saved in _start before BSS clear).
+ * These are in .data (not .bss) so they survive the BSS clear loop.
+ */
+GLOBAL(ramdisk_size)
+	.long	0	| ramdisk size in bytes (0 = no ramdisk)
+GLOBAL(ramdisk_va)
+	.long	0	| ramdisk virtual address (0x800000 or 0)

@@ -18,21 +18,25 @@ maxusers	2
 # Disable unused subsystems
 no options	AIO			# POSIX async I/O
 no options	MQUEUE			# POSIX message queues
-no options	COREDUMP		# Core dumps impractical on 4MB
+no options	COREDUMP		# Core dumps impractical on 8MB
+no options	EXEC_AOUT		# ELF only
+no options	COMPAT_UTILS		# No compat needed
 
 # Standard system options
 # options 	INET		# IP + TCP + UDP + ICMP - disabled to reduce kernel size
 
-# Memory options - reduce sizes for 4MB VA space
-options 	PAGER_MAP_SIZE=0x00020000	# 128KB pager map (reduced to free KVA)
+# Memory options
+options 	PAGER_MAP_SIZE=0x00040000	# 256KB pager map (default 16MB is absurd)
+options		VMSWAP_DEFAULT_PLAINTEXT	# Skip swap encryption (no AES on 68010)
 
 # Console options
 options 	CONSPEED=19200	# Console speed
+# options	CONSDEV_DUART	# Use DUART channel A as console (default: MFP)
 
-# Memory disk for root filesystem
+# Memory disk for root filesystem (ramdisk loaded separately by bootloader)
 options		MEMORY_DISK_HOOKS
 options		MEMORY_DISK_IS_ROOT
-options		MEMORY_DISK_ROOT_SIZE=1536	# 768KB ramdisk (1536 * 512-byte blocks)
+options		MEMORY_DISK_DYNAMIC
 
 # Filesystem options
 file-system	FFS		# Fast filesystem
@@ -64,11 +68,14 @@ mem0		at mainbus0
 # Pseudo devices
 pseudo-device	md			# Memory disk device
 # pseudo-device	loop		# Loopback network - requires INET
-# pseudo-device	pty		# Pseudo ttys - disabled to reduce kernel size
+pseudo-device	pty		# Pseudo ttys
 # pseudo-device	putter		# Required for PUFFS - disabled
+
+# Pipe implementation using socketpair (smaller than dedicated pipe code)
+options		PIPE_SOCKETPAIR
 
 # Root configuration
 config		netbsd root on ? type ?
 
 # Make options
-makeoptions	TEXTADDR="0x00000000"
+makeoptions	TEXTADDR="0x00C00000"

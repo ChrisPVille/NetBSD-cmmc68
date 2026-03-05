@@ -367,7 +367,8 @@ uvm_km_bootstrap(vaddr_t start, vaddr_t end)
 
 	kmem_va_arena = vmem_init(&kmem_va_arena_store, "kva",
 	    0, 0, PAGE_SIZE, vmem_alloc, vmem_free, kmem_arena,
-	    (kmem_arena_small ? 4 : VMEM_QCACHE_IDX_MAX) * PAGE_SIZE,
+	    (kmemsize < 2 * 1024 * 1024 ? 0 :
+	    kmem_arena_small ? 4 : VMEM_QCACHE_IDX_MAX) * PAGE_SIZE,
 	    VM_NOSLEEP, IPL_VM);
 
 	UVMHIST_LOG(maphist, "<- done", 0,0,0,0);

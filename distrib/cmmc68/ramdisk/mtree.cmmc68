@@ -6,8 +6,13 @@
 ./bin
 ./dev
 ./etc
+./libexec
 ./mnt
+./root
 ./sbin
 ./tmp				mode=01777
+./usr
+./usr/bin
 ./var
+./var/log
 ./var/run

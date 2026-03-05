@@ -20,7 +20,7 @@
  * Page shift and kernel base must be defined before including m68k/param.h
  */
 #define	PGSHIFT		12		/* LOG2(NBPG) */
-#define	KERNBASE	0x00000000	/* start of kernel virtual */
+#define	KERNBASE	0x00C00000	/* start of kernel virtual */
 
 #define	UPAGES		2		/* pages of u-area */
 
@@ -40,43 +40,33 @@
 #define	M68K_MMU_CMMC68
 
 /*
- * Number of pages - 4MB physical memory
+ * Number of pages - 8MB physical memory
  */
-#define	LOWPAGES	0x400		/* 4MB / 4KB = 1024 pages */
+#define	LOWPAGES	0x800		/* 8MB / 4KB = 2048 pages */
 
 #define	NPTEPG		(NBPG/(sizeof (pt_entry_t)))
 
 /*
- * Concurrent exec limit - minimize exec_map size for small VA space.
- * exec_map size = MAXEXEC * NCARGS = MAXEXEC * 256KB
- * For 4MB VA space, keep this small (1 = 256KB)
+ * Concurrent exec limit.
+ * exec_map size = MAXEXEC * NCARGS (256KB). Default MAXEXEC=16 → 4MB, which
+ * exceeds our ~1.7MB free KVA.  Keep at 1 for 256KB exec_map.
  */
 #define	MAXEXEC		1
 
 /*
  * Minimum and maximum sizes of the kernel malloc arena in PAGE_SIZE-sized
  * logical pages.
- * CMMC68 has limited VA space (4MB total).
- * Kernel image is ~2.1MB (virtual_avail=0x217000), leaving ~1.96MB for
- * kmem + submaps. Budget:
- *   kmem_va_arena: 1MB (256 pages) - handles pool pages + large allocs
- *   pager_map:     256KB
- *   exec_map:      256KB (MAXEXEC=1 * NCARGS=256KB)
- *   UBC (ubc_init): 8 wins * 8KB = 64KB
- *   other maps:    ~400KB remaining
- * Physical pages are allocated on demand, so kmem VA size doesn't
- * pre-consume physical RAM.
- *
- * 512KB was too small: ls blocked ~90s on vmem (KVA exhaustion).
+ * CMMC68 kernel VA: 0xC00000-0xEFFFFF (3MB).
+ * Kernel image is ~1.3MB, virtual_avail ≈ 0xD4xxxx,
+ * leaving ~1.7MB free KVA. vmem qcache is disabled for arenas < 2MB
+ * (see uvm_km.c) to avoid 64KB pool page allocations.
  */
 #define	NKMEMPAGES_MIN_DEFAULT	((32 * 1024) >> PAGE_SHIFT)   /* 32KB min */
-#define	NKMEMPAGES_MAX_DEFAULT	((768 * 1024) >> PAGE_SHIFT)  /* 768KB max */
+#define	NKMEMPAGES_MAX_DEFAULT	((512 * 1024) >> PAGE_SHIFT)  /* 512KB max */
 
 /*
  * Unified Buffer Cache (UBC) configuration.
- * Default UBC_NWINS=1024 with 8KB windows = 8MB of kernel VA - way too
- * much for our 4MB KVA space.  Use 8 windows to conserve KVA.
- * 8 * 8KB = 64KB of KVA for UBC.
+ * With 1.7MB free KVA, we can afford 16 windows (128KB).
  */
 #define	UBC_NWINS	8
 

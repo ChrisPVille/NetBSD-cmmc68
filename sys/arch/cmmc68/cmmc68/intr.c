@@ -98,6 +98,16 @@ intr_dispatch(struct clockframe *cf)
 	} else if (vecnum >= 0x40 && vecnum <= 0x4F) {
 		/* Other MFP vectors */
 	}
+
+	/*
+	 * MC68010 uses restartable atomic sequences (RAS) for CAS.
+	 * If an interrupt fired during a CAS sequence, restart it.
+	 */
+	if (!CLKF_USERMODE(cf) &&
+	    (CLKF_PC(cf) < (u_long)&_atomic_cas_ras_end &&
+	     CLKF_PC(cf) > (u_long)&_atomic_cas_ras_start)) {
+		cf->cf_pc = (u_long)&_atomic_cas_ras_start;
+	}
 }
 
 /*

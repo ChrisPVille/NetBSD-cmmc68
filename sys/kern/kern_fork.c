@@ -614,7 +614,6 @@ fork1(struct lwp *l1, int flags, int exitsig, void *stack, size_t stacksize,
 		retval[0] = p2->p_pid;
 		retval[1] = 0;
 	}
-
 	mutex_exit(p2->p_lock);
 
 	/*

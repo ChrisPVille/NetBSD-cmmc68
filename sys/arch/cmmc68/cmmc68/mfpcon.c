@@ -111,6 +111,8 @@ mfpconopen(dev_t dev, int flag, int mode, struct lwp *l)
 		tp->t_cflag = CS8 | CREAD | CLOCAL | HUPCL;
 		tp->t_lflag = TTYDEF_LFLAG;
 		tp->t_ispeed = tp->t_ospeed = 19200;
+		tp->t_winsize.ws_row = 24;
+		tp->t_winsize.ws_col = 80;
 
 		mfpconparam(tp, &tp->t_termios);
 		ttsetwater(tp);

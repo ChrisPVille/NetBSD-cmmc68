@@ -1783,7 +1783,6 @@ do_open(lwp_t *l, struct vnode *dvp, struct pathbuf *pb, int open_flags,
 	if ((error = fd_allocfile(&fp, &indx)) != 0) {
 		return error;
 	}
-
 	/* We're going to read cwdi->cwdi_cmask unlocked here. */
 	cmode = ((open_mode &~ cwdi->cwdi_cmask) & ALLPERMS) &~ S_ISTXT;
 

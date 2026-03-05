@@ -10,9 +10,14 @@
  * covering the 16MB address space.  The page table is accessed through
  * a hardware window at MMU_PAGETABLE_WIN (0xFD2000).
  *
- * The bootloader sets up a static mapping of kernel VA 0x0-0x3FFFFF to
- * PA 0x400000-0x7FFFFF.  pmap manages dynamic mappings for UBC windows,
- * kmem, and user pages by writing PTEs directly to the page table window.
+ * VA layout (12:3:1 split):
+ *   0x000000-0xBFFFFF  User space (12MB)
+ *   0xC00000-0xEFFFFF  Kernel (3MB)
+ *   0xF00000-0xFFFFFF  I/O hardware (1MB, identity-mapped)
+ *
+ * The bootloader maps kernel VA 0xC00000-0xEFFFFF to PA 0x401000+.
+ * Ramdisk is mapped by bootloader at user-range VA 0x800000 (supervisor-
+ * only, no PTE_U) and excluded from UVM's free page pool.
  */
 
 #include <sys/param.h>
@@ -31,6 +36,7 @@
 
 #include <m68k/fcode.h>
 #include <m68k/pmap_motorola.h>
+#include <sys/msgbuf.h>
 
 /* Forward declarations */
 paddr_t pmap_bootstrap1(paddr_t, paddr_t);
@@ -60,10 +66,12 @@ struct pmap kernel_pmap_store;
 struct pmap *const kernel_pmap_ptr = &kernel_pmap_store;
 
 /*
- * Kernel PA offset: the physical address that VA 0x0 maps to.
- * Set dynamically from the MMU hardware PTE for VPN 0 during bootstrap.
- * In ROM mode (kernel loaded separately): 0x400000
- * In RAM mode (packed with 4K bootloader): 0x401000
+ * Kernel PA offset: translates kernel VA ↔ PA.
+ *   PA = (VA - KERNBASE) + kernel_pa_offset
+ *   VA = (PA - kernel_pa_offset) + KERNBASE
+ * kernel_pa_offset is the PA that KERNBASE maps to:
+ *   RAM mode:  PPN 0x401 → kernel_pa_offset = 0x401000
+ *   ROM mode:  PPN 0x400 → kernel_pa_offset = 0x400000
  */
 paddr_t kernel_pa_offset;
 
@@ -96,6 +104,13 @@ static vaddr_t pmap_scr1_va;	/* for pmap_zero_page dest */
 static vaddr_t pmap_scr2_va;	/* for pmap_copy_page src */
 
 /*
+ * Ramdisk location — set by locore.s from bootloader %d3/%d4,
+ * consumed by machine_init() to configure md(4).
+ */
+extern volatile uint32_t ramdisk_size;
+extern volatile uint32_t ramdisk_va;
+
+/*
  * Software reference and modify bitmaps.
  *
  * The CMMC68 MMU has no hardware reference/modify bits in its PTEs
@@ -103,21 +118,17 @@ static vaddr_t pmap_scr2_va;	/* for pmap_copy_page src */
  * Without software tracking, pmap_is_referenced() returns false for
  * ALL pages, which causes the page daemon's clock algorithm to treat
  * every page as unreferenced → immediate eviction → catastrophic
- * thrashing when demand-paging brings in new code pages (e.g. first
- * invocation of ls loads ~50 pages of fts/sort/format code that were
- * never touched by sh or chmod, pushing free below freemin, triggering
- * the page daemon which evicts those same pages in a tight loop).
+ * thrashing when demand-paging brings in new code pages.
  *
  * Fix: set reference bit in pmap_enter (page was just mapped, so it's
  * being used).  The page daemon's clock hand clears it; if the page
- * is re-entered before the next scan, it survives.  This gives each
- * page at least one clock-hand reprieve, breaking the thrashing cycle.
+ * is re-entered before the next scan, it survives.
  *
- * Physical RAM: PA 0x400000-0x800000 → PPN 0x400-0x7FF (1024 pages).
- * Bitmaps: 128 bytes each.
+ * Physical RAM: PA 0x400000-0xC00000 → PPN 0x400-0xBFF (2048 pages).
+ * Bitmaps: 256 bytes each.
  */
 #define PMAP_PHYS_BASE_PPN	0x400
-#define PMAP_PHYS_NPAGES	1024	/* 4MB / 4KB */
+#define PMAP_PHYS_NPAGES	2048	/* 8MB / 4KB */
 
 static uint8_t pmap_refbits[PMAP_PHYS_NPAGES / 8];
 static uint8_t pmap_modbits[PMAP_PHYS_NPAGES / 8];
@@ -183,40 +194,45 @@ pmap_test_and_clear_modbit(paddr_t pa)
 }
 
 /*
- * Software bitmap tracking which pages were explicitly mapped by pmap.
- * The bootloader maps all of kernel VA (0x0-0x3FFFFF), but UVM needs
+ * Software bitmap tracking which kernel pages were explicitly mapped by pmap.
+ * The bootloader maps all kernel VA (0xC00000-0xEFFFFF), but UVM needs
  * pmap_extract to return false for pages not explicitly managed by pmap.
- * 1024 pages (4MB / 4KB) = 128 bytes bitmap.
+ * 768 pages (kernel VA 0xC00000-0xEFFFFF at 4KB pages) = 96 bytes bitmap.
  */
-#define PMAP_NKPAGES	1024	/* kernel VA 0x0-0x3FFFFF at 4KB pages */
+#define PMAP_KERN_VPN_BASE	0xC00
+#define PMAP_NKPAGES		768	/* VPN 0xC00-0xEFF */
 static uint8_t pmap_mapped[PMAP_NKPAGES / 8];
 
 static inline void
 pmap_bitmap_set(vaddr_t va)
 {
-	unsigned int vpn = (va >> PAGE_SHIFT) & 0x3FF;
-	pmap_mapped[vpn >> 3] |= (1 << (vpn & 7));
+	unsigned int vpn = (va >> PAGE_SHIFT) - PMAP_KERN_VPN_BASE;
+	if (vpn < PMAP_NKPAGES)
+		pmap_mapped[vpn >> 3] |= (1 << (vpn & 7));
 }
 
 static inline void
 pmap_bitmap_clear(vaddr_t va)
 {
-	unsigned int vpn = (va >> PAGE_SHIFT) & 0x3FF;
-	pmap_mapped[vpn >> 3] &= ~(1 << (vpn & 7));
+	unsigned int vpn = (va >> PAGE_SHIFT) - PMAP_KERN_VPN_BASE;
+	if (vpn < PMAP_NKPAGES)
+		pmap_mapped[vpn >> 3] &= ~(1 << (vpn & 7));
 }
 
 static inline bool
 pmap_bitmap_test(vaddr_t va)
 {
-	unsigned int vpn = (va >> PAGE_SHIFT) & 0x3FF;
-	return (pmap_mapped[vpn >> 3] & (1 << (vpn & 7))) != 0;
+	unsigned int vpn = (va >> PAGE_SHIFT) - PMAP_KERN_VPN_BASE;
+	if (vpn < PMAP_NKPAGES)
+		return (pmap_mapped[vpn >> 3] & (1 << (vpn & 7))) != 0;
+	return false;
 }
 
 /*
  * Per-process user PTE backing store.
  *
  * Each user pmap has a software copy of its user-space PTEs.
- * User VA range: 0x400000-0xDFFFFF → VPN 0x400-0xDFF = 2560 entries.
+ * User VA range: 0x000000-0xBFFFFF → VPN 0x000-0xBFF = 3072 entries.
  * On context switch, pmap_activate() loads the new process's PTEs
  * into the hardware page table window.
  *
@@ -224,10 +240,10 @@ pmap_bitmap_test(vaddr_t va)
  *   pm_ptab  → pointer to uint16_t[USER_NPTES] backing store
  *   pm_stab  → next pointer in global pmap list
  */
-#define USER_VPN_BASE	0x400
-#define USER_VPN_END	0xE00				/* exclusive */
-#define USER_NPTES	(USER_VPN_END - USER_VPN_BASE)	/* 2560 */
-#define USER_PTE_BYTES	(USER_NPTES * sizeof(uint16_t))	/* 5120 */
+#define USER_VPN_BASE	0x000
+#define USER_VPN_END	0xC00				/* exclusive */
+#define USER_NPTES	(USER_VPN_END - USER_VPN_BASE)	/* 3072 */
+#define USER_PTE_BYTES	(USER_NPTES * sizeof(uint16_t))	/* 6144 */
 
 #define PM_USER_PTES(pm)   ((uint16_t *)(pm)->pm_ptab)
 #define PM_SET_PTES(pm, p) ((pm)->pm_ptab = (pt_entry_t *)(p))
@@ -276,10 +292,30 @@ pmap_read_pte(vaddr_t va)
 
 
 /*
+ * Helper: is this a user VA?
+ * With kernel above user, we must check BOTH bounds.
+ */
+static inline bool
+pmap_is_user_va(vaddr_t va)
+{
+	return (va < VM_MAX_USER_ADDRESS);
+}
+
+/*
+ * Helper: is this a kernel VA?
+ */
+static inline bool
+pmap_is_kernel_va(vaddr_t va)
+{
+	return (va >= VM_MIN_KERNEL_ADDRESS && va < VM_MAX_KERNEL_ADDRESS);
+}
+
+
+/*
  * Bootstrap pmap initialization
  * Called very early in boot before VM is initialized
  * For CMMC68, this is called as pmap_bootstrap1 from locore.s
- * 
+ *
  * IMPORTANT: The bootloader has already set up MMU mappings.
  * We just initialize the kernel pmap structure here and allocate
  * the lwp0 u-area.
@@ -291,15 +327,15 @@ pmap_bootstrap1(paddr_t nextpa, paddr_t reloff)
 
 	/*
 	 * Auto-detect kernel PA offset from the MMU hardware.
-	 * The bootloader wrote PTEs mapping VPN 0 → some PPN.
-	 * Read PTE for VPN 0 to determine the PA offset.
-	 *   ROM mode:  VPN 0 → PPN 0x400 → offset 0x400000
-	 *   RAM mode:  VPN 0 → PPN 0x401 → offset 0x401000
+	 * The bootloader wrote PTEs mapping VPN 0xC00 → some PPN.
+	 * Read PTE for VPN 0xC00 to determine the PA offset.
+	 *   ROM mode:  VPN 0xC00 → PPN 0x400 → offset 0x400000 - 0xC00000 = 0xFF800000
+	 *   RAM mode:  VPN 0xC00 → PPN 0x401 → offset 0x401000 - 0xC00000 = 0xFF801000
 	 */
 	{
 		volatile uint16_t *pte_window =
 		    (volatile uint16_t *)MMU_PAGETABLE_WIN;
-		uint16_t pte0 = pte_window[0];
+		uint16_t pte0 = pte_window[0xC00];
 		uint16_t ppn0 = pte0 & PTE_PPN;
 		kernel_pa_offset = (paddr_t)ppn0 << PAGE_SHIFT;
 	}
@@ -310,16 +346,16 @@ pmap_bootstrap1(paddr_t nextpa, paddr_t reloff)
 
 	/*
 	 * Store lwp0 u-area virtual address.
-	 * VA = PA - kernel_pa_offset
+	 * VA = (PA - kernel_pa_offset) + KERNBASE
 	 */
-	lwp0uarea = (vaddr_t)(lwp0upa - kernel_pa_offset);
+	lwp0uarea = (vaddr_t)(lwp0upa - kernel_pa_offset) + KERNBASE;
 
 	/* Initialize kernel pmap */
 	memset(&kernel_pmap_store, 0, sizeof(kernel_pmap_store));
 	kernel_pmap_store.pm_count = 1;
 
 	/* Initialize virtual_avail/end for pmap_virtual_space */
-	virtual_avail = (vaddr_t)(nextpa - kernel_pa_offset);
+	virtual_avail = (vaddr_t)(nextpa - kernel_pa_offset) + KERNBASE;
 
 	/*
 	 * Reserve two scratch VAs for pmap_zero_page/pmap_copy_page.
@@ -353,14 +389,49 @@ pmap_bootstrap2(void)
 	uvm_md_init();
 
 	/*
-	 * Register physical memory with UVM.
-	 * CMMC68 has RAM at PA 0x400000-0x800000 (4MB).
-	 * The kernel is loaded at PA 0x400000, so we need to skip
-	 * the kernel and reserve space for the lwp0 uarea.
-	 * virtual_avail was set in pmap_bootstrap1 to the VA after kernel.
+	 * Allocate message buffer for dmesg(8).
+	 * Reserve space from virtual_avail (within the bootloader's
+	 * static VA→PA mapping) before UVM claims the rest.
 	 */
-	avail_start = (paddr_t)virtual_avail + kernel_pa_offset;
-	avail_end = 0x800000;  /* End of 4MB RAM */
+	{
+		vaddr_t msgbuf_va = virtual_avail;
+		virtual_avail += m68k_round_page(MSGBUFSIZE);
+		initmsgbuf((void *)msgbuf_va, m68k_round_page(MSGBUFSIZE));
+	}
+
+	/*
+	 * Register physical memory with UVM.
+	 * CMMC68 has RAM at PA 0x400000-0xC00000 (8MB).
+	 * The kernel is loaded at PA 0x401000 (RAM mode).
+	 * Ramdisk follows kernel contiguously.
+	 * avail_start must skip past kernel + ramdisk.
+	 *
+	 * If ramdisk is present, its PA follows the kernel binary:
+	 *   ramdisk_pa_start = end_of_kernel_pa (page-aligned)
+	 *   ramdisk_pa_end = ramdisk_pa_start + round_page(ramdisk_size)
+	 * avail_start = max(virtual_avail_pa, ramdisk_pa_end)
+	 */
+	{
+		paddr_t va_pa = (paddr_t)(virtual_avail - KERNBASE) +
+		    kernel_pa_offset;
+		paddr_t rd_pa_end = va_pa;  /* default: no ramdisk */
+
+		if (ramdisk_size > 0) {
+			/*
+			 * Ramdisk is at a known VA (0x800000) mapped by
+			 * bootloader. Its PA can be read from the PTE.
+			 * Compute ramdisk PA end from ramdisk_va PTE.
+			 */
+			uint16_t rd_pte = pmap_read_pte(ramdisk_va);
+			paddr_t rd_pa_start =
+			    (paddr_t)(rd_pte & PTE_PPN) << PAGE_SHIFT;
+			rd_pa_end = rd_pa_start +
+			    m68k_round_page(ramdisk_size);
+		}
+
+		avail_start = (va_pa > rd_pa_end) ? va_pa : rd_pa_end;
+		avail_end = 0xC00000;  /* End of 8MB RAM */
+	}
 
 	/* Register available physical memory with UVM */
 	uvm_page_physload(atop(avail_start), atop(avail_end),
@@ -385,7 +456,8 @@ pmap_bootstrap2(void)
 	 */
 	{
 		vaddr_t va;
-		for (va = 0; va < virtual_avail; va += PAGE_SIZE)
+		for (va = VM_MIN_KERNEL_ADDRESS; va < virtual_avail;
+		    va += PAGE_SIZE)
 			pmap_bitmap_set(va);
 	}
 
@@ -396,6 +468,30 @@ pmap_bootstrap2(void)
 	 */
 	pmap_write_pte(pmap_scr1_va, PTE_INVALID);
 	pmap_write_pte(pmap_scr2_va, PTE_INVALID);
+
+	/*
+	 * Clear all user-range PTEs left by the bootloader.
+	 * The bootloader sets a temporary self-map at VPN 0x400
+	 * (supervisor-only) for its own execution. If not cleared,
+	 * user processes hitting that VA get privilege violations.
+	 * Also clears the ramdisk PTEs from the user VPN range
+	 * since they are supervisor-only and not user-accessible.
+	 * The md driver accesses the ramdisk via kernel pmap_kenter_pa
+	 * or direct VA access (supervisor mode), not through user PTEs.
+	 *
+	 * Actually, leave ramdisk PTEs alone — the md driver reads
+	 * from ramdisk_va directly in supervisor mode. Only clear
+	 * the stale bootloader self-map.
+	 */
+	{
+		volatile uint16_t *hw =
+		    (volatile uint16_t *)MMU_PAGETABLE_WIN;
+		int i;
+		/* Clear VPN 0x000-0x7FF (user VA below ramdisk) */
+		for (i = 0; i < 0x800; i++)
+			hw[i] = PTE_INVALID;
+		/* Leave VPN 0x800+ (ramdisk) alone */
+	}
 
 	/*
 	 * Initialize lwp0 uarea, curlwp, and curpcb.
@@ -551,7 +647,7 @@ pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
 {
 	uint16_t pte;
 	unsigned int ppn;
-	bool user = (va >= VM_MIN_USER_ADDRESS);
+	bool user = pmap_is_user_va(va);
 
 	ppn = (pa >> PAGE_SHIFT) & PTE_PPN;
 	pte = PTE_M | ppn | pmap_prot_to_pte(prot, user);
@@ -573,7 +669,7 @@ pmap_enter(pmap_t pm, vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
 	} else {
 		/* Kernel VA or no backing store: write to hardware */
 		pmap_write_pte(va, pte);
-		if (!user && va < VM_MAX_KERNEL_ADDRESS)
+		if (pmap_is_kernel_va(va))
 			pmap_bitmap_set(va);
 	}
 
@@ -592,7 +688,7 @@ pmap_remove(pmap_t pm, vaddr_t sva, vaddr_t eva)
 	vaddr_t va;
 
 	for (va = sva; va < eva; va += PAGE_SIZE) {
-		if (va >= VM_MIN_USER_ADDRESS &&
+		if (pmap_is_user_va(va) &&
 		    pm != pmap_kernel() && PM_USER_PTES(pm) != NULL) {
 			unsigned int vpn = (va >> PAGE_SHIFT) & 0xFFF;
 			unsigned int idx = vpn - USER_VPN_BASE;
@@ -603,7 +699,7 @@ pmap_remove(pmap_t pm, vaddr_t sva, vaddr_t eva)
 			}
 		} else {
 			pmap_write_pte(va, PTE_INVALID);
-			if (va < VM_MAX_KERNEL_ADDRESS)
+			if (pmap_is_kernel_va(va))
 				pmap_bitmap_clear(va);
 		}
 	}
@@ -627,6 +723,8 @@ pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 		 * mapping. UVM needs pmap_extract to return false for
 		 * unallocated KVA.
 		 */
+		if (!pmap_is_kernel_va(va))
+			return false;
 		if (!pmap_bitmap_test(va))
 			return false;
 		pte = pmap_read_pte(va);
@@ -639,7 +737,7 @@ pmap_extract(pmap_t pm, vaddr_t va, paddr_t *pap)
 	}
 
 	/* User VA: read hardware if active, backing store otherwise */
-	if (va >= VM_MIN_USER_ADDRESS) {
+	if (pmap_is_user_va(va)) {
 		if (pm == pmap_active) {
 			/* Active pmap: read hardware directly */
 			pte = pmap_read_pte(va);
@@ -681,7 +779,7 @@ pmap_protect(pmap_t pm, vaddr_t sva, vaddr_t eva, vm_prot_t prot)
 	}
 
 	for (va = sva; va < eva; va += PAGE_SIZE) {
-		if (va < VM_MIN_USER_ADDRESS)
+		if (!pmap_is_user_va(va))
 			continue;
 
 		if (pm != pmap_kernel() && PM_USER_PTES(pm) != NULL) {
@@ -720,19 +818,53 @@ pmap_activate(struct lwp *l)
 	volatile uint16_t *hw = (volatile uint16_t *)MMU_PAGETABLE_WIN;
 	int i;
 
+
+
 	/* If same pmap is already active, nothing to do */
 	if (pm == pmap_active)
 		return;
 
 	if (pm == pmap_kernel() || PM_USER_PTES(pm) == NULL) {
-		/* Kernel thread: clear all user PTEs in hardware */
-		for (i = USER_VPN_BASE; i < USER_VPN_END; i++)
+		/*
+		 * Kernel thread: clear user PTEs in hardware,
+		 * but preserve ramdisk mapping if present.
+		 * Ramdisk is at VPN 0x800+ (VA 0x800000), supervisor-
+		 * only, mapped by the bootloader.  The md driver
+		 * accesses it directly in supervisor mode.
+		 */
+		unsigned int rd_vpn_start = 0;
+		unsigned int rd_vpn_end = 0;
+		if (ramdisk_size > 0 && ramdisk_va != 0) {
+			rd_vpn_start = ramdisk_va >> PAGE_SHIFT;
+			rd_vpn_end = rd_vpn_start +
+			    ((ramdisk_size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+		}
+		for (i = USER_VPN_BASE; i < USER_VPN_END; i++) {
+			if (i >= rd_vpn_start && i < rd_vpn_end)
+				continue;  /* preserve ramdisk PTE */
 			hw[i] = PTE_INVALID;
+		}
 	} else {
-		/* User process: load its user PTEs into hardware */
+		/*
+		 * User process: load its user PTEs into hardware.
+		 * Preserve ramdisk PTEs (supervisor-only, bootloader-
+		 * mapped) — user processes can't access them anyway
+		 * since PTE_U is not set.
+		 */
 		uint16_t *ptes = PM_USER_PTES(pm);
-		for (i = 0; i < USER_NPTES; i++)
-			hw[USER_VPN_BASE + i] = ptes[i];
+		unsigned int rd_vpn_start = 0;
+		unsigned int rd_vpn_end = 0;
+		if (ramdisk_size > 0 && ramdisk_va != 0) {
+			rd_vpn_start = ramdisk_va >> PAGE_SHIFT;
+			rd_vpn_end = rd_vpn_start +
+			    ((ramdisk_size + PAGE_SIZE - 1) >> PAGE_SHIFT);
+		}
+		for (i = 0; i < USER_NPTES; i++) {
+			unsigned int vpn = USER_VPN_BASE + i;
+			if (vpn >= rd_vpn_start && vpn < rd_vpn_end)
+				continue;  /* preserve ramdisk PTE */
+			hw[vpn] = ptes[i];
+		}
 	}
 
 	pmap_active = pm;
@@ -877,7 +1009,7 @@ pmap_pageidlezero(paddr_t pa)
  * Always reads from the backing store (contiguous RAM array) rather
  * than the hardware PTE window — the backing store is kept in sync by
  * pmap_enter/pmap_remove/pmap_protect, and scanning RAM is much faster
- * than 2560 volatile device reads through the MMU window.  Hardware is
+ * than 3072 volatile device reads through the MMU window.  Hardware is
  * only touched on match (0-1 writes per call) for the active pmap.
  */
 void
@@ -921,9 +1053,9 @@ pmap_page_protect(struct vm_page *pg, vm_prot_t prot)
  * Kernel virtual enter (no PTE_U — kernel only)
  *
  * Write a hardware PTE to map VA → PA for kernel use.
- * The bootloader's static mapping (VA+0x400000) is only valid for
- * kernel text/data. Dynamic KVA (UBC, kmem, etc.) needs real PTEs
- * because the PA may differ from the static offset.
+ * The bootloader's static mapping is only valid for kernel text/data.
+ * Dynamic KVA (UBC, kmem, etc.) needs real PTEs because the PA may
+ * differ from the static offset.
  */
 void
 pmap_kenter_pa(vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
@@ -936,7 +1068,7 @@ pmap_kenter_pa(vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
 
 	pmap_write_pte(va, pte);
 
-	if (va < VM_MAX_KERNEL_ADDRESS)
+	if (pmap_is_kernel_va(va))
 		pmap_bitmap_set(va);
 }
 
@@ -946,8 +1078,6 @@ pmap_kenter_pa(vaddr_t va, paddr_t pa, vm_prot_t prot, u_int flags)
  * Clear the PTE to PTE_INVALID so subsequent accesses fault.
  * This is critical for UBC: the read path relies on page faults
  * to trigger genfs_getpages when a file page needs loading.
- * If we restore the bootloader's static mapping instead, the CPU
- * reads from the wrong PA (static offset) without faulting.
  */
 void
 pmap_kremove(vaddr_t va, vsize_t size)
@@ -957,7 +1087,7 @@ pmap_kremove(vaddr_t va, vsize_t size)
 	for (; va < end; va += PAGE_SIZE) {
 		pmap_write_pte(va, PTE_INVALID);
 
-		if (va < VM_MAX_KERNEL_ADDRESS)
+		if (pmap_is_kernel_va(va))
 			pmap_bitmap_clear(va);
 	}
 }
@@ -992,12 +1122,6 @@ pmap_tlb_flush(void)
 void
 pmap_virtual_space(vaddr_t *startp, vaddr_t *endp)
 {
-	/*
-	 * Return kernel virtual address range.
-	 * The bootloader maps VA 0x0-0x3FFFFF to PA 0x400000 (kernel RAM).
-	 * virtual_avail is set by pmap_bootstrap to the end of the kernel
-	 * image plus any early allocations.
-	 */
 	*startp = virtual_avail;
 	*endp = VM_MAX_KERNEL_ADDRESS;
 }
@@ -1020,11 +1144,8 @@ pmap_copy(pmap_t dst_pmap, pmap_t src_pmap, vaddr_t dst_addr, vsize_t len, vaddr
 paddr_t
 pmap_phys_address(vaddr_t va)
 {
-	/* TODO: Extract PA from page table */
-	/* For now, assume identity mapping in kernel space */
-	if (va >= VM_MIN_KERNEL_ADDRESS && va < VM_MAX_KERNEL_ADDRESS) {
-		return va - VM_MIN_KERNEL_ADDRESS;
+	if (pmap_is_kernel_va(va)) {
+		return (va - KERNBASE) + kernel_pa_offset;
 	}
 	return 0;
 }
-

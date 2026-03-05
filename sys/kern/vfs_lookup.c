@@ -1177,9 +1177,11 @@ unionlookup:
 		 * cache and/or modifications need to be made.
 		 */
 		if (error == ENOLCK) {
+			int upg;
 			KASSERT(VOP_ISLOCKED(searchdir) == LK_SHARED);
 			KASSERT(searchdir_locked);
-			if (vn_lock(searchdir, LK_UPGRADE | LK_NOWAIT)) {
+			upg = vn_lock(searchdir, LK_UPGRADE | LK_NOWAIT);
+			if (upg) {
 				VOP_UNLOCK(searchdir);
 				searchdir_locked = false;
 			}

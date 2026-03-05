@@ -44,8 +44,8 @@ locore.o: ${CMMC68}/cmmc68/locore.s assym.h
 ## (5) link settings
 ##
 LINKFORMAT=	-n
-TEXTADDR?=	0x00000000
-LOADADDRESS?=	0x00000000
+TEXTADDR?=	0x00C00000
+LOADADDRESS?=	0x00C00000
 
 KERN_LDSCRIPT?=	${S}/arch/cmmc68/conf/kern.ldscript
 

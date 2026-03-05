@@ -1,5 +1,5 @@
-PATH=/bin:/sbin
+PATH=/bin:/sbin:/usr/bin
 TERM=vt100
 export PATH TERM
 set -o emacs
-echo "NetBSD/cmmc68"
+echo "Welcome to NetBSD/cmmc68!"

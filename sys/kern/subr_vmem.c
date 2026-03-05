@@ -338,7 +338,6 @@ bt_alloc(vmem_t *vm, vm_flag_t flags)
 			 * short period of time and retry regardless.
 			 * This should be a very rare case.
 			 */
-
 			vmem_kick_pdaemon();
 			kpause("btalloc", false, 1, &vm->vm_lock);
 		}
@@ -1313,7 +1312,6 @@ retry:
 		goto retry;
 	}
 	/* XXX */
-
 	if ((flags & VM_SLEEP) != 0) {
 		vmem_kick_pdaemon();
 		VMEM_CONDVAR_WAIT(vm);
