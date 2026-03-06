@@ -13,7 +13,7 @@ The cross-toolchain must be built first (one-time):
 ./build.sh -U -m cmmc68 tools
 ```
 
-Then use the wrapper script in the parent directory:
+Then use the wrapper script in the cmmc-68 top project directory (wip/not included):
 
 ```bash
 cd .. && ./netbsd/build.sh      # full build
@@ -63,11 +63,11 @@ the first 32 KB of the address space.
 
 ```
 0x000000 ┌─────────────────────────────────┐
-         │  Null guard (unmapped)           │  4 KB (1 page)
+         │  Null guard (unmapped)          │  4 KB (1 page)
 0x001000 ├─────────────────────────────────┤
          │  Text (R-X)                     │  ~1.2 MB
          │  Entry point: 0x10C8            │
-~0x137000├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
+~0x137000├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ┤
          │  Alignment padding              │
 0x1385C0 ├─────────────────────────────────┤
          │  Data + BSS (RW-)               │  ~207 KB
