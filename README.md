@@ -30,11 +30,11 @@ Output: `cmmc68.bin` in the parent `netbsd/` directory.
 
 ```
 0x000000 ┌─────────────────────────────────┐
-         │  User space                      │  12 MB (per-process)
+         │ User space                      │  12 MB (per-process)
 0xC00000 ├─────────────────────────────────┤
-         │  Kernel text/data/bss + free KVA │  3 MB
+         │ Kernel text/data/bss + free KVA │  3 MB
 0xF00000 ├─────────────────────────────────┤
-         │  I/O devices (identity mapped)   │  1 MB (supervisor-only)
+         │ I/O devices (identity mapped)   │  1 MB (supervisor-only)
 0xFFFFFF └─────────────────────────────────┘
 ```
 
@@ -65,25 +65,25 @@ the first 32 KB of the address space.
 0x000000 ┌─────────────────────────────────┐
          │  Null guard (unmapped)           │  4 KB (1 page)
 0x001000 ├─────────────────────────────────┤
-         │  Text (R-X)                      │  ~1.2 MB
-         │  Entry point: 0x10C8             │
+         │  Text (R-X)                     │  ~1.2 MB
+         │  Entry point: 0x10C8            │
 ~0x137000├ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─ ─┤
-         │  Alignment padding               │
+         │  Alignment padding              │
 0x1385C0 ├─────────────────────────────────┤
          │  Data + BSS (RW-)               │  ~207 KB
 ~0x16C000├─────────────────────────────────┤
-         │                                  │
-         │  brk() / mmap() arena            │  ~7.5 MB free
-         │  brk() grows upward              │
-         │  mmap() hints from data end      │
-         │                                  │
+         │                                 │
+         │  brk() / mmap() arena           │  ~7.5 MB free
+         │  brk() grows upward             │
+         │  mmap() hints from data end     │
+         │                                 │
 0x900000 ├─────────────────────────────────┤
-         │  Stack guard (PROT_NONE)         │  1 MB (hard fault on access)
+         │  Stack guard (PROT_NONE)        │  1 MB (hard fault on access)
 0xA00000 ├─────────────────────────────────┤
-         │  Stack noaccess (PROT_NONE)      │  1.5 MB (demand-fault growth)
+         │  Stack noaccess (PROT_NONE)     │  1.5 MB (demand-fault growth)
 0xB80000 ├─────────────────────────────────┤
-         │  Stack (RW-, grows downward)     │  512 KB initial (DFLSSIZ)
-         │  SP starts at USRSTACK           │
+         │  Stack (RW-, grows downward)    │  512 KB initial (DFLSSIZ)
+         │  SP starts at USRSTACK          │
 0xC00000 └─────────────────────────────────┘  ← USRSTACK
 ```
 
